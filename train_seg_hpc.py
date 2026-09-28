@@ -1,0 +1,129 @@
+"""Train (or fine-tune) a Cellpose network for one modality. Resumable: a checkpoint is written
+every few epochs, so a preempted/requeued SLURM job continues where it stopped.
+
+usage: python train_seg_hpc.py --mod ex --config cyto3_x3 --fold subject_db6b8b
+       (--fold = held-out subject for cross-validation, or 'full' to train on all mice)
+"""
+import os, sys, json, time, argparse
+import numpy as np
+import torch
+
+from common import gt_labels, training_ids, load_images, run_dir
+from configs import CONFIGS
+from segdata import norm_img, make_tiles, median_diameter
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--mod", required=True, choices=["iv", "ex"])
+ap.add_argument("--config", required=True)
+ap.add_argument("--fold", required=True)
+ap.add_argument("--seed", type=int, default=0)
+ap.add_argument("--ckpt-every", type=int, default=10)
+ap.add_argument("--epochs", type=int, default=None, help="override (for quick tests)")
+ap.add_argument("--max-regions", type=int, default=None, help="for quick tests")
+args = ap.parse_args()
+
+cfg = dict(CONFIGS[args.config])
+if args.epochs:
+    cfg["epochs"] = args.epochs
+out = run_dir(args.config, args.mod, args.fold)
+os.makedirs(out, exist_ok=True)
+final_path = os.path.join(out, "model")
+if os.path.exists(os.path.join(out, "train_done.json")):
+    print("already trained:", final_path); sys.exit(0)
+
+from cellpose import models, dynamics, transforms, train as cptrain
+from cellpose.resnet_torch import CPnet
+
+np.random.seed(args.seed); torch.manual_seed(args.seed)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("device", device, "| config", args.config, cfg, flush=True)
+
+# ------------------------------------------------------------------ data: native-resolution tiles
+holdout = set() if args.fold == "full" else {args.fold}
+ids = training_ids(exclude=holdout)
+if args.max_regions:
+    ids = ids[:args.max_regions]
+rng = np.random.default_rng(0)
+tiles, tlabs, diams, seen = [], [], [], set()
+for sid in ids:
+    iv, ex = load_images(sid, "training")
+    liv, lex, _ = gt_labels(sid)
+    img, lab = (iv, liv) if args.mod == "iv" else (ex, lex)
+    key = hash(img.tobytes())
+    if key in seen:  # some regions share an identical image
+        continue
+    seen.add(key)
+    ti, tl = make_tiles(norm_img(img), lab, tile=128, step=112, rng=rng)
+    tiles += ti; tlabs += tl
+    diams.append(median_diameter(lab))
+print(f"{len(ids)} regions -> {len(tiles)} tiles, median diameter {np.median(diams):.2f}px", flush=True)
+# flow targets are computed on the CPU: Cellpose 3.1.1.3's GPU version crashes on tiles that contain a
+# single foreground pixel (np.stack on a 0-d array in _extend_centers_gpu); the CPU version is fine
+flows = dynamics.labels_to_flows(tlabs, device=torch.device("cpu"))  # each (4,H,W): label, mask, flowY, flowX
+X = [np.stack([t, np.zeros_like(t)]).astype(np.float32) for t in tiles]  # 2 channels: image + empty
+Y = [f[1:] for f in flows]                                          # mask, flowY, flowX
+nimg = len(X)
+
+# ------------------------------------------------------------------ network
+up = float(cfg["up"])
+if cfg.get("pretrained"):
+    pre = os.environ.get("CM_CYTO3", "") if cfg["pretrained"] == "cyto3" else ""
+    pre = pre if pre and os.path.exists(pre) else cfg["pretrained"]
+    kw = dict(pretrained_model=pre) if os.path.exists(str(pre)) else dict(model_type=pre)
+    base = models.CellposeModel(gpu=device.type == "cuda", device=device, **kw)
+    net = base.net
+else:
+    net = CPnet([2, *cfg["nbase"]], 3, sz=3, mkldnn=False, max_pool=True, diam_mean=float(up * 10.0)).to(device)
+net.diam_labels.data = torch.Tensor([np.median(diams) * up]).to(device)
+opt = torch.optim.AdamW(net.parameters(), lr=cfg["lr"], weight_decay=1e-5)
+
+# learning-rate schedule identical to cellpose.train.train_seg
+E, lr = cfg["epochs"], cfg["lr"]
+LR = np.linspace(0, lr, 10)
+LR = np.append(LR, lr * np.ones(max(0, E - 10)))
+if E > 300:
+    LR = LR[:-100]
+    for i in range(10):
+        LR = np.append(LR, LR[-1] / 2 * np.ones(10))
+elif E > 100:
+    LR = LR[:-50]
+    for i in range(10):
+        LR = np.append(LR, LR[-1] / 2 * np.ones(5))
+
+ckpt = os.path.join(out, "ckpt.pt")
+start = 0
+if os.path.exists(ckpt):
+    st = torch.load(ckpt, map_location=device, weights_only=False)
+    net.load_state_dict(st["net"]); opt.load_state_dict(st["opt"]); start = st["epoch"] + 1
+    print("resumed from epoch", start, flush=True)
+
+rescale = np.full(cfg["batch"], 1.0 / up, np.float32)  # random_rotate_and_resize scales by 1/rescale = up
+t0 = time.time()
+for ep in range(start, E):
+    np.random.seed(ep + 1000 * args.seed)
+    perm = np.random.choice(nimg, size=cfg["nimg"], replace=nimg < cfg["nimg"])
+    for g in opt.param_groups:
+        g["lr"] = LR[ep]
+    net.train()
+    tot, n = 0.0, 0
+    for k in range(0, cfg["nimg"], cfg["batch"]):
+        inds = perm[k:k + cfg["batch"]]
+        imgi, lbl = transforms.random_rotate_and_resize([X[i] for i in inds], Y=[Y[i] for i in inds],
+                                                        rescale=rescale[:len(inds)], scale_range=0.5,
+                                                        xy=(cfg["bsize"], cfg["bsize"]))[:2]
+        y = net(torch.from_numpy(imgi).to(device))[0]
+        loss = cptrain._loss_fn_seg(lbl, y, device)
+        opt.zero_grad(); loss.backward(); opt.step()
+        tot += loss.item() * len(inds); n += len(inds)
+    if ep % 10 == 0 or ep == E - 1:
+        print(f"epoch {ep}  loss {tot / n:.4f}  lr {LR[ep]:.5f}  {time.time() - t0:.0f}s", flush=True)
+    if (ep + 1) % args.ckpt_every == 0 or ep == E - 1:
+        tmp = ckpt + ".tmp"
+        torch.save(dict(net=net.state_dict(), opt=opt.state_dict(), epoch=ep), tmp)
+        os.replace(tmp, ckpt)
+
+net.save_model(final_path)
+json.dump(dict(config=args.config, cfg=cfg, fold=args.fold, mod=args.mod, n_tiles=nimg, regions=len(ids),
+               median_diam=float(np.median(diams)), minutes=(time.time() - t0) / 60),
+          open(os.path.join(out, "train_done.json"), "w"), indent=1)
+print("saved", final_path, flush=True)

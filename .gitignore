@@ -1,0 +1,13 @@
+# competition data is uploaded to the cluster separately (not redistributed via git)
+data/
+Project_2_Dataset/
+*.zip
+# generated on the cluster
+runs/
+runs_smoke/
+cache/
+logs/
+submission*.csv
+__pycache__/
+*.pyc
+.DS_Store
