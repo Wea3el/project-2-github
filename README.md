@@ -7,8 +7,8 @@ The pipeline:
 3. Hungarian assignment of candidate pairs.
 4. A gradient-boosted pair classifier that picks which pairs to report.
 
-This repo retrains the segmentation networks on NYU HPC (cloud bursting, Lecture 1 setup) and
-writes `submission.csv`. The competition data is **not** in the repo; you upload it to the
+This repo retrains the segmentation networks on NYU HPC (Torch, or the Lecture 1 cloud-bursting
+setup) and writes `submission.csv`. The competition data is **not** in the repo; you upload it to the
 cluster separately (step 2).
 
 ## 1. Clone on HPC
@@ -60,6 +60,16 @@ It should end with `47/47 training regions, 29/29 test regions -> OK` and `setup
 overlay lives somewhere other than `/scratch/$USER/overlays/overlay.ext3`, edit the first lines of
 `hpc_env.sh`. No job may be running on the overlay while you run `setup_env.sh`.
 
+## 3b. Pick the account and partitions (`cluster.sh`)
+All submit scripts read the SLURM account and partitions from `cluster.sh`. The defaults are for the
+NYU **Torch** cluster (`torch_pr_355_general`, GPU partition `l40s_public`, CPU partition `cpu_short`).
+For the course's cloud-bursting cluster, use the values in the comments at the top of that file. Check
+that a combination is accepted, without actually submitting anything:
+```bash
+sbatch --test-only --account=torch_pr_355_general --partition=l40s_public --gres=gpu:1 -t 1:00:00 --wrap=hostname
+```
+A line like `Job ... to start at ...` means it's accepted. An error names what's wrong.
+
 ## 4. Smoke test (~15 min)
 ```bash
 bash submit_smoke.sh
@@ -105,5 +115,6 @@ GPU use: about 1 L4-hour for the fast run and 10–20 for the full comparison (t
 | `cm_pipeline.py`, `consensus2.py`, `match.py`, `pipeline.py` | matching pipeline |
 | `cmutil.py`, `segdata.py`, `seg_infer.py`, `shape_ops.py` | utilities, metric, Cellpose inference |
 | `weights/` | current segmentation weights (`full_iv`, `full_ex`) and pair classifier |
+| `cluster.sh` | SLURM account + GPU/CPU partitions used by all submit scripts |
 | `hpc_env.sh`, `setup_env.sh`, `submit_*.sh`, `jobs/*.sbatch` | HPC job scripts |
 | `cellmatch_colab_train.ipynb` | the same runs on Google Colab (expects the code and data in `MyDrive/cellmatch/`) |

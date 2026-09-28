@@ -4,9 +4,10 @@
 #   bash submit_cv.sh             # all configs in configs.CV_CONFIGS
 set -e
 cd "$(dirname "$0")"; export CM_HOME="$(pwd)"; mkdir -p logs
+source ./cluster.sh
 N=$(python3 tasks.py count)
-JID=$(sbatch --parsable --export=ALL,CM_HOME="$CM_HOME" --array=0-$((N - 1)) jobs/train_cv.sbatch); JID=${JID%%;*}
+JID=$(sbatch --parsable $GPU_OPTS --export=ALL,CM_HOME="$CM_HOME" --array=0-$((N - 1)) jobs/train_cv.sbatch); JID=${JID%%;*}
 echo "training array job $JID with $N tasks"
-EID=$(sbatch --parsable --export=ALL,CM_HOME="$CM_HOME" --dependency=afterany:"$JID" jobs/evaluate.sbatch); EID=${EID%%;*}
+EID=$(sbatch --parsable $CPU_OPTS --export=ALL,CM_HOME="$CM_HOME" --dependency=afterany:"$JID" jobs/evaluate.sbatch); EID=${EID%%;*}
 echo "evaluation job $EID (waits for $JID)  ->  results in logs/cm_eval_${EID}.out and runs/best_config.json"
 echo "monitor: squeue -u \$USER"
