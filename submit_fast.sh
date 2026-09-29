@@ -3,5 +3,6 @@
 set -e
 cd "$(dirname "$0")"; export CM_HOME="$(pwd)"; mkdir -p logs
 source ./cluster.sh
-JID=$(sbatch --parsable $GPU_OPTS --export=ALL,CM_HOME="$CM_HOME" jobs/fast.sbatch); JID=${JID%%;*}
+DEP=$(bash ./submit_setup.sh --dep)   # empty once the environment is built
+JID=$(sbatch --parsable $GPU_OPTS $DEP --kill-on-invalid-dep=yes --export=ALL,CM_HOME="$CM_HOME" jobs/fast.sbatch); JID=${JID%%;*}
 echo "fast job $JID  ->  tail -f logs/cm_fast_${JID}.out   (result: $CM_HOME/submission.csv)"

@@ -10,12 +10,11 @@
 #SBATCH --gres=gpu:1
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
-#SBATCH --comment="gpu_mps=yes"
 # ~10 min end-to-end check of the environment (GPU, cellpose, cyto3 download, data) on a tiny
 # subset. Writes to runs_smoke/, never to runs/.
 export CM_RUNS="$CM_HOME/runs_smoke" CM_MAX_REGIONS=2
 source "$CM_HOME/hpc_env.sh"
-nvidia-smi --query-gpu=name,memory.total --format=csv
+echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"; nvidia-smi --query-gpu=index,name,compute_mode --format=csv
 cm_run "python -c 'import torch; assert torch.cuda.is_available(), \"no GPU visible\"; print(\"GPU:\", torch.cuda.get_device_name(0))' && \
         python train_seg_hpc.py --mod ex --config base --fold subject_db6b8b --epochs 3 && \
         python train_seg_hpc.py --mod iv --config base --fold subject_db6b8b --epochs 3 && \

@@ -11,11 +11,10 @@
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --requeue
-#SBATCH --comment="gpu_mps=yes"
 # "Fast" run in one job: current (shipped) in-vivo model + cyto3 fine-tuned for ex-vivo on all three
 # mice -> submission.csv. Resumes from its checkpoint if preempted and requeued.
 source "$CM_HOME/hpc_env.sh"
-nvidia-smi --query-gpu=name,memory.total --format=csv
+echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"; nvidia-smi --query-gpu=index,name,compute_mode --format=csv
 cm_run "set -e
         python infer_flows_hpc.py --mod iv --config shipped --fold full --split hidden_test --model weights/full_iv
         python train_seg_hpc.py   --mod ex --config cyto3_x3 --fold full

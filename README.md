@@ -27,38 +27,37 @@ unzip -q ../Project_2_Dataset.zip && mv Project_2_Dataset data
 ls data        # hidden_test  sample_submission.csv  training
 ```
 
-## 3. Environment (once)
-If you don't have a Singularity overlay with the conda env `/ext3/envs/torch` yet, create one
-(Lecture 1, "Singularity Setup"):
+## 3. Environment (once, ~15-20 min)
 ```bash
-mkdir -p /scratch/$USER/overlays && cd /scratch/$USER/overlays
-cp /share/apps/overlay-fs-ext3/overlay-15GB-500K.ext3.gz . && gunzip overlay-15GB-500K.ext3.gz
-mv overlay-15GB-500K.ext3 overlay.ext3
-singularity exec --overlay /scratch/$USER/overlays/overlay.ext3:rw \
-    /share/apps/images/cuda12.1.1-cudnn8.9.0-devel-ubuntu22.04.2.sif /bin/bash
-# --- now inside the container (prompt "Singularity>") ---
-wget --no-check-certificate https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
-bash Miniforge3-Linux-x86_64.sh -b -p /ext3/miniforge3
-cat > /ext3/env.sh << 'EOF'
-#!/bin/bash
-unset -f which
-source /ext3/miniforge3/etc/profile.d/conda.sh
-export PATH=/ext3/miniforge3/bin:$PATH
-EOF
-source /ext3/env.sh
-conda create -p /ext3/envs/torch python=3.11 -y
-conda activate /ext3/envs/torch
-pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
-exit
+bash submit_setup.sh
+tail -f logs/cm_setup_*.out          # finishes with: environment ready
 ```
-Then install this project's packages and download the pretrained Cellpose model:
+This runs `setup_overlay.sh` as a CPU job. It builds `/scratch/$USER/overlay/cellmatch.ext3` with a
+conda env `/ext3/envs/cellmatch`: PyTorch 2.5.1 + CUDA 12.1, Cellpose 3.1.1.3 and the other packages
+at the versions the pipeline was tested with. It also downloads the Cellpose `cyto3` weights and
+checks the data. You can also skip this step: every `submit_*.sh` queues the build automatically when
+the environment isn't there yet, and its GPU jobs wait for it (if the build fails, they are cancelled).
+
+The overlay is only usable once `/scratch/$USER/overlay/cellmatch.ext3.ready` exists. The build writes
+that file last, so a half-finished overlay is never used. Two things about Torch: it runs Apptainer,
+where writing into an overlay needs `--fakeroot`; and login nodes cap memory at 2 GB, too little to
+install torch. So the build always runs on a compute node.
+
+**By hand** (same result, in an interactive session):
 ```bash
-cd /scratch/$USER/project-2-github
-bash setup_env.sh
+srun --account=torch_pr_355_general --partition=cpu_short --cpus-per-task=4 --mem=16G --time=01:30:00 --pty /bin/bash
+cd /scratch/$USER/overlay && rm -f cellmatch.ext3*
+gunzip -c /share/apps/overlay-fs-ext3/overlay-15GB-500K.ext3.gz > cellmatch.ext3
+singularity exec --fakeroot --overlay cellmatch.ext3:rw /share/apps/images/cuda12.1.1-cudnn8.9.0-devel-ubuntu22.04.2.sif /bin/bash
+#   inside: install Miniforge to /ext3/miniforge3, write /ext3/env.sh, conda create -p /ext3/envs/cellmatch
+#   python=3.11, then pip install the versions in requirements.txt (torch from the cu121 index); exit
+touch /scratch/$USER/overlay/cellmatch.ext3.ready
 ```
-It should end with `47/47 training regions, 29/29 test regions -> OK` and `setup done`. If your
-overlay lives somewhere other than `/scratch/$USER/overlays/overlay.ext3`, edit the first lines of
-`hpc_env.sh`. No job may be running on the overlay while you run `setup_env.sh`.
+
+To reuse an overlay you already have instead, set `OVERLAY` and `CONDA_ENV` at the top of
+`hpc_env.sh` and run `bash setup_env.sh` in an interactive CPU session. It only installs the packages
+into that env and then writes the `.ready` marker. No job may be using the overlay while either script
+runs.
 
 ## 3b. Pick the account and partitions (`cluster.sh`)
 All submit scripts read the SLURM account and partitions from `cluster.sh`. The defaults are for the
@@ -82,14 +81,18 @@ three mice, keeps the current in-vivo model, and writes `submission.csv`.
 ```bash
 bash submit_fast.sh
 ```
-**Full comparison (several hours):** trains 5 configurations with each mouse held out in turn (30
-GPU jobs). A CPU job then scores every setting with the competition metric and writes
-`runs/best_config.json`. After that, train the winner on all mice:
+**Full comparison (a few hours):** trains 5 configurations with each mouse held out in turn (30 GPU
+jobs, ~10 min each on an L40S). CPU jobs then score the settings with the competition metric
+(`submit_eval.sh`: stage A ranks the segmentations, stage B runs the full pipeline for the best
+combinations, split over 12 array tasks) and write `runs/best_config.json`. After that, train the
+winner on all mice:
 ```bash
-bash submit_cv.sh
-# when logs/cm_eval_*.out shows "best: ...":
+bash submit_cv.sh                    # training + scoring (scoring starts when training ends)
+# when logs/cm_eval_*.out of the last job shows "best: ...":
 bash submit_full.sh
 ```
+Every scored combination is saved in `runs/cv_B/` as soon as it finishes. If a scoring job is
+interrupted, `bash submit_eval.sh` resumes it and skips the finished ones.
 
 ## Monitoring and results
 ```bash
@@ -110,11 +113,12 @@ GPU use: about 1 L4-hour for the fast run and 10–20 for the full comparison (t
 | `configs.py` | training configurations and evaluation grids |
 | `train_seg_hpc.py` | resumable Cellpose training / cyto3 fine-tuning |
 | `infer_flows_hpc.py` | runs a model and caches its outputs per region |
-| `evaluate_cv.py` | leave-one-mouse-out scoring with the competition metric |
+| `evaluate_cv.py`, `submit_eval.sh` | leave-one-mouse-out scoring with the competition metric (resumable, split over CPU jobs) |
 | `predict_test.py` | test-set masks → registration → pairs → `submission.csv` |
 | `cm_pipeline.py`, `consensus2.py`, `match.py`, `pipeline.py` | matching pipeline |
 | `cmutil.py`, `segdata.py`, `seg_infer.py`, `shape_ops.py` | utilities, metric, Cellpose inference |
 | `weights/` | current segmentation weights (`full_iv`, `full_ex`) and pair classifier |
 | `cluster.sh` | SLURM account + GPU/CPU partitions used by all submit scripts |
+| `setup_overlay.sh`, `submit_setup.sh` | one-time build of the Singularity overlay + conda env (as a CPU job) |
 | `hpc_env.sh`, `setup_env.sh`, `submit_*.sh`, `jobs/*.sbatch` | HPC job scripts |
 | `cellmatch_colab_train.ipynb` | the same runs on Google Colab (expects the code and data in `MyDrive/cellmatch/`) |

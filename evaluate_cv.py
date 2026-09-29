@@ -2,27 +2,27 @@
 
 Stage A: segmentation quality per (config, modality, held-out mouse, cellprob threshold):
          PQ and the true-positive rate on *verified* (matchable) cells.
-Stage B: full competition score S for combinations of the best in-vivo settings with every
-         ex-vivo setting (registration + consensus + pair classifier trained without the
-         held-out mouse), for several pair thresholds.
-Writes runs/cv_stageA.csv, runs/cv_stageB.csv and runs/best_config.json.
+Stage B: full competition score S for combinations of in-vivo and ex-vivo settings (registration +
+         consensus + pair classifier trained without the held-out mouse), for several pair thresholds.
+         Every combination is saved to runs/cv_B/ as soon as it finishes, so an interrupted run
+         loses nothing, and the work can be split across several jobs (--shard/--nshards).
+Aggregation: runs/cv_stageB.csv and runs/best_config.json.
 
-usage: python evaluate_cv.py [--workers 8] [--configs base,cyto3_x3]
+usage: python evaluate_cv.py                         # everything in one process (resumable)
+       python evaluate_cv.py --stage a               # stage A (reused if runs/cv_stageA.csv is complete)
+       python evaluate_cv.py --stage b --shard 3 --nshards 10   # one share of stage B
+       python evaluate_cv.py --stage agg             # combine whatever stage B results exist
 """
-import os, sys, json, argparse, itertools, time
+import os, sys, json, argparse, time
 from multiprocessing import Pool
 import numpy as np, pandas as pd
 
 from common import RUNS, gt_labels, training_ids, load_images, masks_from_flows, load_flows, run_dir, flows_path
 from configs import CV_CONFIGS, SUBJECTS, CP_GRID, THR_GRID
 
-ap = argparse.ArgumentParser()
-ap.add_argument("--workers", type=int, default=8)
-ap.add_argument("--configs", default=",".join(CV_CONFIGS))
-ap.add_argument("--iv-top", type=int, default=2, help="how many in-vivo settings to carry into stage B")
-ap.add_argument("--ex-cps", default="-0.5,0,0.5")
-args = ap.parse_args()
-configs = args.configs.split(",")
+BDIR = os.path.join(RUNS, "cv_B")
+A_CSV = os.path.join(RUNS, "cv_stageA.csv")
+TASKS_JSON = os.path.join(BDIR, "tasks.json")
 
 
 def complete(cfg, mod, fold):
@@ -49,12 +49,21 @@ def stage_a(task):
     return rows
 
 
-def stage_b(task):
+def b_key(task):
     fold, (ivc, ivcp), (exc, excp) = task
+    return f"{fold}__{ivc}_{ivcp:g}__{exc}_{excp:g}"
+
+
+def stage_b(task):
+    out_fn = os.path.join(BDIR, b_key(task) + ".csv")
+    if os.path.exists(out_fn):
+        return out_fn
+    fold, (ivc, ivcp), (exc, excp) = task
+    t0 = time.time()
     import pickle
     from sklearn.ensemble import HistGradientBoostingClassifier
     from cm_pipeline import match_regions, score
-    rows_gt = pickle.load(open(os.path.join(os.path.dirname(__file__), "weights", "pairs_gt.pkl"), "rb"))
+    rows_gt = pickle.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "weights", "pairs_gt.pkl"), "rb"))
     tr = [r for r in rows_gt if r["sid"].split("__")[0] != fold]
     clf = HistGradientBoostingClassifier(max_iter=200, learning_rate=0.05, max_leaf_nodes=15, min_samples_leaf=20,
                                          l2_regularization=1.0, random_state=0).fit(
@@ -75,39 +84,80 @@ def stage_b(task):
         s, per = score(pred, gts)
         out.append(dict(fold=fold, iv_config=ivc, cp_iv=ivcp, ex_config=exc, cp_ex=excp, thr=t, **s,
                         n_regions=len(per), pq_iv_sum=per.pq_iv.sum(), pq_ex_sum=per.pq_ex.sum()))
-    print("B", fold, ivc, ivcp, exc, excp, f"S={out[1]['S']:.4f}", flush=True)
-    return out
+    tmp = out_fn + f".{os.getpid()}.tmp"
+    pd.DataFrame(out).to_csv(tmp, index=False)
+    os.replace(tmp, out_fn)
+    print("B", fold, ivc, ivcp, exc, excp, f"S={out[1]['S']:.4f}", f"({(time.time() - t0) / 60:.1f} min)", flush=True)
+    return out_fn
 
 
-if __name__ == "__main__":
-    t0 = time.time()
-    for sid in training_ids(subjects=SUBJECTS):  # build the ground-truth label cache once, serially
-        gt_labels(sid)
-    tasks = [(c, m, f) for c in configs for m in ("iv", "ex") for f in SUBJECTS if complete(c, m, f)]
-    missing = [(c, m, f) for c in configs for m in ("iv", "ex") for f in SUBJECTS if (c, m, f) not in tasks]
-    if missing:
-        print("not finished (skipped):", missing)
-    with Pool(args.workers) as pool:
-        A = pd.DataFrame([r for rows in pool.map(stage_a, tasks) for r in rows])
-    A.to_csv(os.path.join(RUNS, "cv_stageA.csv"), index=False)
+def stage_b_safe(task):
+    # one failing combination must not stop the rest of this share
+    try:
+        return stage_b(task)
+    except Exception as e:
+        import traceback
+        print("B FAILED", b_key(task), repr(e), flush=True); traceback.print_exc()
+        return None
+
+
+def summarize_a(A):
     # per fold: region-mean PQ, pooled verified TP rate; then average over folds (only settings run on all folds)
     g = A.groupby(["config", "mod", "cp", "fold"]).agg(pq=("pq", "mean"), vh=("ver_hits", "sum"), nv=("n_ver", "sum")).reset_index()
     g["ver_tp"] = g.vh / g.nv.clip(lower=1)
     s = g.groupby(["config", "mod", "cp"]).agg(pq=("pq", "mean"), ver_tp=("ver_tp", "mean"), folds=("fold", "count")).reset_index()
     s = s[s.folds == s.folds.max()] if len(s) else s
+    return g, s
+
+
+def run_stage_a(configs, workers):
+    tasks = [(c, m, f) for c in configs for m in ("iv", "ex") for f in SUBJECTS if complete(c, m, f)]
+    missing = [(c, m, f) for c in configs for m in ("iv", "ex") for f in SUBJECTS if (c, m, f) not in tasks]
+    if missing:
+        print("not finished (skipped):", missing)
+    A = pd.read_csv(A_CSV) if os.path.exists(A_CSV) else None
+    have = set() if A is None else set(map(tuple, A[["config", "mod", "fold"]].drop_duplicates().values))
+    if A is not None and set(tasks) <= have:
+        print(f"stage A: reusing {A_CSV}")
+        A = A[A.apply(lambda r: (r.config, r["mod"], r.fold) in set(tasks), axis=1)]
+    else:
+        for sid in training_ids(subjects=SUBJECTS):  # build the ground-truth label cache once, serially
+            gt_labels(sid)
+        with Pool(workers) as pool:
+            A = pd.DataFrame([r for rows in pool.map(stage_a, tasks) for r in rows])
+        A.to_csv(A_CSV, index=False)
+    return A
+
+
+def make_b_tasks(A, iv_top, iv_extra, ex_top, ex_cps):
+    g, s = summarize_a(A)
     pd.set_option("display.width", 200); pd.set_option("display.max_rows", 200)
     print("\n=== Stage A (mean over held-out mice) ===")
     print(s.sort_values(["mod", "pq"], ascending=[True, False]).round(4).to_string(index=False))
-
-    iv_c = [tuple(x) for x in s[s["mod"] == "iv"].sort_values("pq", ascending=False)[["config", "cp"]].values[:args.iv_top]]
-    ex_cfgs = sorted(set(s[s["mod"] == "ex"].config))
-    ex_c = [(c, float(v)) for c in ex_cfgs for v in args.ex_cps.split(",")]
+    siv = s[s["mod"] == "iv"].sort_values("pq", ascending=False)
+    iv_c = [(c, float(v)) for c, v in siv[["config", "cp"]].values[:iv_top]]
+    for x in filter(None, iv_extra.split(",")):          # e.g. the settings of the current best submission
+        c, v = x.split(":")
+        if (c, float(v)) not in iv_c and ((siv.config == c) & np.isclose(siv.cp, float(v))).any():
+            iv_c.append((c, float(v)))
+    sex = s[s["mod"] == "ex"]
+    ex_rank = sex.groupby("config").ver_tp.max().sort_values(ascending=False)   # verified cells drive the F1 term
+    ex_cfgs = list(ex_rank.index[:ex_top] if ex_top else ex_rank.index)
+    ex_c = [(c, float(v)) for c in ex_cfgs for v in ex_cps.split(",")]
     folds = sorted(set(g.fold))
-    tasksB = [(f, i, e) for f in folds for i in iv_c for e in ex_c
-              if complete(i[0], "iv", f) and complete(e[0], "ex", f)]
-    print(f"\nStage B: {len(tasksB)} runs (iv settings {iv_c}; ex settings {ex_c})", flush=True)
-    with Pool(args.workers) as pool:
-        B = pd.DataFrame([r for rows in pool.map(stage_b, tasksB) for r in rows])
+    tasks = [(f, i, e) for f in folds for i in iv_c for e in ex_c if complete(i[0], "iv", f) and complete(e[0], "ex", f)]
+    print(f"\nStage B: {len(tasks)} runs (iv settings {iv_c}; ex settings {ex_c})", flush=True)
+    return tasks
+
+
+def aggregate():
+    tasks = [(f, tuple(i), tuple(e)) for f, i, e in json.load(open(TASKS_JSON))]
+    files = [os.path.join(BDIR, b_key(t) + ".csv") for t in tasks]
+    have = [f for f in files if os.path.exists(f)]
+    print(f"stage B results: {len(have)}/{len(files)} combinations finished")
+    if not have:
+        sys.exit("nothing to aggregate yet")
+    B = pd.concat([pd.read_csv(f) for f in have], ignore_index=True)
     B.to_csv(os.path.join(RUNS, "cv_stageB.csv"), index=False)
     key = ["iv_config", "cp_iv", "ex_config", "cp_ex", "thr"]
     # pooled over all held-out mice, like the leaderboard (PQ averaged over regions, F1 pooled over pairs)
@@ -120,11 +170,47 @@ if __name__ == "__main__":
     P["f1"] = 2 * P.prec * P.rec / (P.prec + P.rec).clip(lower=1e-9)
     P["S_pooled"] = 0.25 * (P.pq_iv + P.pq_ex) + 0.5 * P.f1
     P = P.sort_values("S_pooled", ascending=False)
-    print("\n=== Stage B: full score, pooled over held-out mice ===")
+    pd.set_option("display.width", 200); pd.set_option("display.max_rows", 200)
+    print(f"\n=== Stage B: full score, pooled over held-out mice ({int(P.folds.max())} mice) ===")
     print(P[key + ["S_pooled", "S_foldmean", "pq_iv", "pq_ex", "f1", "prec", "rec"]].head(25).round(4).to_string(index=False))
     best = P.iloc[0]
     bj = dict(iv_config=best.iv_config, cp_iv=float(best.cp_iv), ex_config=best.ex_config, cp_ex=float(best.cp_ex),
               thr=float(best.thr), S_pooled=float(best.S_pooled), pq_iv=float(best.pq_iv), pq_ex=float(best.pq_ex),
-              f1=float(best.f1))
+              f1=float(best.f1), combinations_scored=len(have), combinations_total=len(files))
     json.dump(bj, open(os.path.join(RUNS, "best_config.json"), "w"), indent=1)
-    print("\nbest:", bj, f"\n({(time.time() - t0) / 60:.1f} min)")
+    print("\nbest:", bj)
+    if len(have) < len(files):
+        print(f"WARNING: {len(files) - len(have)} combinations missing - rerun `bash submit_eval.sh` to finish them "
+              "(finished ones are skipped)")
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--stage", default="all", choices=["all", "a", "b", "agg"])
+    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--shard", type=int, default=0)
+    ap.add_argument("--nshards", type=int, default=1)
+    ap.add_argument("--configs", default=",".join(CV_CONFIGS))
+    ap.add_argument("--iv-top", type=int, default=2, help="best in-vivo settings (by PQ) carried into stage B")
+    ap.add_argument("--iv-extra", default="cyto3_x3:-1", help="in-vivo settings always included (config:cellprob)")
+    ap.add_argument("--ex-top", type=int, default=3, help="ex-vivo configs carried into stage B (0 = all)")
+    ap.add_argument("--ex-cps", default="-0.5,0,0.5")
+    args = ap.parse_args()
+    t0 = time.time()
+    os.makedirs(BDIR, exist_ok=True)
+
+    if args.stage in ("all", "a"):
+        A = run_stage_a(args.configs.split(","), args.workers)
+        tasks = make_b_tasks(A, args.iv_top, args.iv_extra, args.ex_top, args.ex_cps)
+        json.dump(tasks, open(TASKS_JSON, "w"), indent=0)
+    if args.stage in ("all", "b"):
+        tasks = [(f, tuple(i), tuple(e)) for f, i, e in json.load(open(TASKS_JSON))]
+        mine = tasks[args.shard::args.nshards]
+        todo = [t for t in mine if not os.path.exists(os.path.join(BDIR, b_key(t) + ".csv"))]
+        print(f"stage B share {args.shard + 1}/{args.nshards}: {len(mine)} combinations, {len(todo)} still to run", flush=True)
+        if todo:
+            with Pool(min(args.workers, len(todo))) as pool:
+                pool.map(stage_b_safe, todo, chunksize=1)
+    if args.stage in ("all", "agg"):
+        aggregate()
+    print(f"({(time.time() - t0) / 60:.1f} min)")

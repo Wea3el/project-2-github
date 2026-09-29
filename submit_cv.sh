@@ -5,9 +5,9 @@
 set -e
 cd "$(dirname "$0")"; export CM_HOME="$(pwd)"; mkdir -p logs
 source ./cluster.sh
+DEP=$(bash ./submit_setup.sh --dep)   # empty once the environment is built
 N=$(python3 tasks.py count)
-JID=$(sbatch --parsable $GPU_OPTS --export=ALL,CM_HOME="$CM_HOME" --array=0-$((N - 1)) jobs/train_cv.sbatch); JID=${JID%%;*}
+JID=$(sbatch --parsable $GPU_OPTS $DEP --kill-on-invalid-dep=yes --export=ALL,CM_HOME="$CM_HOME" --array=0-$((N - 1)) jobs/train_cv.sbatch); JID=${JID%%;*}
 echo "training array job $JID with $N tasks"
-EID=$(sbatch --parsable $CPU_OPTS --export=ALL,CM_HOME="$CM_HOME" --dependency=afterany:"$JID" jobs/evaluate.sbatch); EID=${EID%%;*}
-echo "evaluation job $EID (waits for $JID)  ->  results in logs/cm_eval_${EID}.out and runs/best_config.json"
+bash ./submit_eval.sh --after "$JID"     # scoring starts when all training tasks have finished
 echo "monitor: squeue -u \$USER"
