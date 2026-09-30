@@ -14,6 +14,7 @@ ap.add_argument("--best", default=os.path.join(RUNS, "best_config.json"))
 ap.add_argument("--iv-config"); ap.add_argument("--cp-iv", type=float)
 ap.add_argument("--ex-config"); ap.add_argument("--cp-ex", type=float)
 ap.add_argument("--thr", type=float)
+ap.add_argument("--pairs", help="pair classifier training data: gt (shipped), oof or both (see evaluate_cv.fit_clf)")
 ap.add_argument("--iv-fold", default="full"); ap.add_argument("--ex-fold", default="full")
 ap.add_argument("--out", default=os.path.join(ROOT, "submission.csv"))
 args = ap.parse_args()
@@ -21,17 +22,18 @@ b = json.load(open(args.best)) if os.path.exists(args.best) else {}
 ivc = args.iv_config or b["iv_config"]; cpi = args.cp_iv if args.cp_iv is not None else b["cp_iv"]
 exc = args.ex_config or b["ex_config"]; cpe = args.cp_ex if args.cp_ex is not None else b["cp_ex"]
 thr = args.thr if args.thr is not None else b.get("thr", 0.1)
-print(f"in-vivo: {ivc} cp={cpi} | ex-vivo: {exc} cp={cpe} | pair thr={thr}", flush=True)
+pairs = args.pairs or b.get("pairs", "gt")
+print(f"in-vivo: {ivc} cp={cpi} | ex-vivo: {exc} cp={cpe} | pair thr={thr} | pair classifier: {pairs}", flush=True)
 
-try:
-    clf = pickle.load(open(os.path.join(ROOT, "weights", "pair_clf.pkl"), "rb"))
-except Exception as e:  # scikit-learn version mismatch -> refit from the shipped features
-    print("refitting pair classifier (", e, ")")
-    from sklearn.ensemble import HistGradientBoostingClassifier
-    rows = pickle.load(open(os.path.join(ROOT, "weights", "pairs_gt.pkl"), "rb"))
-    clf = HistGradientBoostingClassifier(max_iter=200, learning_rate=0.05, max_leaf_nodes=15, min_samples_leaf=20,
-                                         l2_regularization=1.0, random_state=0).fit(
-        np.concatenate([r["F"] for r in rows]), np.concatenate([r["y"] for r in rows]))
+clf = None
+if pairs == "gt":
+    try:
+        clf = pickle.load(open(os.path.join(ROOT, "weights", "pair_clf.pkl"), "rb"))
+    except Exception as e:  # scikit-learn version mismatch -> refit from the shipped features below
+        print("refitting pair classifier (", e, ")")
+if clf is None:
+    from evaluate_cv import fit_clf
+    clf = fit_clf(pairs, fold="none")   # all training mice
 
 sample = pd.read_csv(os.path.join(DATA, "sample_submission.csv"))
 items = []

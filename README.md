@@ -94,6 +94,37 @@ bash submit_full.sh
 Every scored combination is saved in `runs/cv_B/` as soon as it finishes. If a scoring job is
 interrupted, `bash submit_eval.sh` resumes it and skips the finished ones.
 
+## 6. More experiments (all can run at the same time)
+Each run writes to its own folders, so they don't interfere. Use a different `OUT=` for each
+submission you build.
+
+**A. New segmentation variants (GPU, ~30 cross-validation tasks).** Trains the round-2 configs of
+`configs.py` with each mouse held out (longer training, 4x upsampling, brightness/contrast
+augmentation, the Cellpose `nuclei` model, extra random seeds, test-time augmentation), then scores
+everything with the tag `round2`. The flow ensembles in `configs.ENSEMBLES` (averaged outputs of
+several models) are scored automatically once their members exist:
+```bash
+CM_CV_TASKS="$(python3 -c 'from configs import ROUND2; print(ROUND2)')" EVAL_ARGS="--tag round2" bash submit_cv.sh
+# result: runs/best_config_round2.json, then
+BEST=runs/best_config_round2.json OUT=submission_round2.csv bash submit_full.sh
+```
+
+**B. Pair classifier trained on predicted masks (CPU only).** The shipped pair classifier was fitted on
+candidate pairs from ground-truth masks; this fits it on out-of-fold predicted masks (what it sees on
+the test set) and compares gt / oof / both:
+```bash
+bash submit_pairs.sh
+# result: runs/best_config_pairs.json; to use the winner with the current models:
+PRED_ARGS="--pairs oof" OUT=submission_pairs.csv bash submit_full.sh cyto3_x2 cyto3_x3
+```
+
+**C. Direct leaderboard tries** (no cross-validation; the ex-vivo model is already trained):
+```bash
+OUT=submission_tta.csv PRED_ARGS="--cp-iv -0.5 --cp-ex 0 --thr 0.2" bash submit_full.sh cyto3_x2 cyto3_x3_tta
+```
+Config names: `<config>_tta` = that model with test-time augmentation; `a+b` = ensemble of a and b
+(same upsampling), e.g. `cyto3_x3+cyto3_x3_lr1`.
+
 ## Monitoring and results
 ```bash
 squeue -u $USER                      # your jobs
@@ -113,6 +144,7 @@ GPU use: about 1 L4-hour for the fast run and 10–20 for the full comparison (t
 | `configs.py` | training configurations and evaluation grids |
 | `train_seg_hpc.py` | resumable Cellpose training / cyto3 fine-tuning |
 | `infer_flows_hpc.py` | runs a model and caches its outputs per region |
+| `build_pairs_oof.py`, `submit_pairs.sh` | pair classifier from out-of-fold predicted masks |
 | `evaluate_cv.py`, `submit_eval.sh` | leave-one-mouse-out scoring with the competition metric (resumable, split over CPU jobs) |
 | `predict_test.py` | test-set masks → registration → pairs → `submission.csv` |
 | `cm_pipeline.py`, `consensus2.py`, `match.py`, `pipeline.py` | matching pipeline |

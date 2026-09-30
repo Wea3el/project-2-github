@@ -20,10 +20,30 @@ CONFIGS = {
     "cyto3_x2": dict(pretrained="cyto3", up=2, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005),
     "cyto3_x3": dict(pretrained="cyto3", up=3, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005),
     "cyto3_x3_lr1": dict(pretrained="cyto3", up=3, bsize=224, epochs=300, nimg=256, batch=8, lr=0.001),
+    # round 2 (after the first cross-validation: cyto3_x3 best for ex-vivo, cyto3_x2 for in-vivo)
+    "cyto3_x3_long": dict(pretrained="cyto3", up=3, bsize=224, epochs=600, nimg=512, batch=8, lr=0.005),
+    "cyto3_x4": dict(pretrained="cyto3", up=4, bsize=256, epochs=300, nimg=256, batch=8, lr=0.005),
+    # random brightness/contrast/noise on the training crops (test mice look different)
+    "cyto3_x3_aug": dict(pretrained="cyto3", up=3, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005, aug=True),
+    "nuclei_x2": dict(pretrained="nuclei", up=2, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005),
+    # same recipe, other random seeds: members of flow ensembles (see ENSEMBLES)
+    "cyto3_x3_s1": dict(pretrained="cyto3", up=3, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005, seed=1),
+    "cyto3_x3_s2": dict(pretrained="cyto3", up=3, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005, seed=2),
+    "cyto3_x2_s1": dict(pretrained="cyto3", up=2, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005, seed=1),
+    "cyto3_x2_s2": dict(pretrained="cyto3", up=2, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005, seed=2),
     # the shipped weights behind submissions v3/v4 (trained on all three mice): only for
     # predictions (runs/shipped/<mod>/full) or sanity checks, never for cross-validation
     "shipped": dict(pretrained=None, nbase=(16, 32, 64, 128), up=1),
 }
+
+# Two more kinds of "config" need no entry above:
+#   "<config>_tta"  - the trained <config> model run with test-time augmentation (flipped tiles averaged)
+#   "a+b+c"         - ensemble: the flows of configs a, b, c averaged (same "up" required)
+ENSEMBLES = ["cyto3_x3+cyto3_x3_s1+cyto3_x3_s2", "cyto3_x3+cyto3_x3_lr1", "cyto3_x2+cyto3_x2_s1+cyto3_x2_s2"]
+
+# round-2 cross-validation tasks (config:modality), run with  CM_CV_TASKS="$ROUND2" bash submit_cv.sh
+ROUND2 = ("cyto3_x3_long:ex cyto3_x4:ex cyto3_x3_aug:ex nuclei_x2:ex cyto3_x3_s1:ex cyto3_x3_s2:ex cyto3_x3_tta:ex "
+          "cyto3_x2_s1:iv cyto3_x2_s2:iv cyto3_x2_tta:iv")
 
 # configurations run in cross-validation (edit to add/remove)
 CV_CONFIGS = ["base", "big", "cyto3_x2", "cyto3_x3", "cyto3_x3_lr1"]

@@ -56,9 +56,24 @@ def flows_path(run_dir, sid):
     return os.path.join(run_dir, "flows", f"{sid}.npz")
 
 
+def members(rd):
+    """Run dirs behind rd. A config named "a+b" is the ensemble of configs a and b (their flows are averaged)."""
+    fold, mod = os.path.basename(rd), os.path.basename(os.path.dirname(rd))
+    root, cfg = os.path.split(os.path.dirname(os.path.dirname(rd)))
+    return [os.path.join(root, c, mod, fold) for c in cfg.split("+")]
+
+
+def has_flows(rd, sid):
+    return all(os.path.exists(flows_path(m, sid)) for m in members(rd))
+
+
 def load_flows(run_dir, sid):
-    z = np.load(flows_path(run_dir, sid))
-    return z["dP"].astype(np.float32), z["cellprob"].astype(np.float32), float(z["up"])
+    fl = []
+    for m in members(run_dir):
+        z = np.load(flows_path(m, sid))
+        fl.append((z["dP"].astype(np.float32), z["cellprob"].astype(np.float32), float(z["up"])))
+    assert len({f[2] for f in fl}) == 1, f"ensemble members of {run_dir} use different upsampling"
+    return sum(f[0] for f in fl) / len(fl), sum(f[1] for f in fl) / len(fl), fl[0][2]
 
 
 def run_dir(config, mod, fold):

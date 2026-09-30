@@ -20,9 +20,11 @@ ap.add_argument("--model", default=None, help="explicit weights path (default: r
 ap.add_argument("--max-regions", type=int, default=None)
 args = ap.parse_args()
 
-rd = run_dir(args.config, args.mod, args.fold)
+rd = run_dir(args.config, args.mod, args.fold)             # where the flows go
+tta = args.config.endswith("_tta")                          # "<config>_tta": that model + test-time augmentation
+base = args.config[:-4] if tta else args.config
 split = args.split or ("hidden_test" if args.fold == "full" else "training")
-up = float(CONFIGS[args.config]["up"])
+up = float(CONFIGS[base]["up"])
 if split == "training":
     ids = training_ids(subjects=[args.fold]) if args.fold != "full" else training_ids()
 else:
@@ -30,7 +32,7 @@ else:
 if args.max_regions:
     ids = ids[:args.max_regions]
 os.makedirs(os.path.join(rd, "flows"), exist_ok=True)
-model = load_cp(args.model or os.path.join(rd, "model"), up=up)
+model = load_cp(args.model or os.path.join(run_dir(base, args.mod, args.fold), "model"), up=up)
 torch.set_num_threads(max(1, (os.cpu_count() or 2)))
 t0 = time.time()
 for sid in ids:
@@ -39,7 +41,7 @@ for sid in ids:
         continue
     iv, ex = load_images(sid, split)
     img = iv if args.mod == "iv" else ex
-    _, fl = segment(model, img, up=up, cellprob=0.0, return_flows=True)
+    _, fl = segment(model, img, up=up, cellprob=0.0, return_flows=True, augment=tta)
     tmp = fn + f".{os.getpid()}.tmp.npz"
     # float32 for final (test-set) outputs so the submission is reproduced exactly; float16 is plenty
     # for cross-validation folds and halves the disk space

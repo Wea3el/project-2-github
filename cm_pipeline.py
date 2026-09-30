@@ -9,9 +9,10 @@ from pipeline import region_candidates, consensus_pick, region_pairs
 from consensus2 import group_register
 
 
-def match_regions(items, clf_for, thrs=(0.1,), weak="drop", verbose=False):
+def match_regions(items, clf_for, thrs=(0.1,), weak="drop", verbose=False, feats=None):
     """items: list of dict(sid, iv_img, ex_img, liv, lex). clf_for(sid) -> fitted classifier.
-    Returns {thr: {sid: [(iv_label, ex_label), ...]}}, log DataFrame."""
+    Returns {thr: {sid: [(iv_label, ex_label), ...]}}, log DataFrame.
+    feats (dict, optional) receives {sid: (iv labels, ex labels, features)} of every candidate pair."""
     info, data, cands, shapes = {}, {}, {}, {}
     for it in items:
         sid = it["sid"]
@@ -32,6 +33,8 @@ def match_regions(items, clf_for, thrs=(0.1,), weak="drop", verbose=False):
             others = [c["z"] for c in cands[sid] if np.linalg.norm(c["cen"] - reg["cen"]) > 40]
             reg["zgap"] = reg["z"] - (max(others) if others else 0)
             a, b, F = region_pairs(Tiv, Tex, reg, ivs)
+            if feats is not None:
+                feats[sid] = (Tiv["labels"][a], Tex["labels"][b], F)
             p = clf_for(sid).predict_proba(F)[:, 1] if len(a) else np.zeros(0)
         for t in thrs:
             pairs, ui, ue = [], set(), set()

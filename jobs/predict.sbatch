@@ -11,4 +11,4 @@
 #SBATCH --error=logs/%x_%j.err
 # CPU only: masks from the cached test-set outputs -> registration -> pairs -> submission.csv
 source "$CM_HOME/hpc_env.sh"
-cm_run "python predict_test.py --iv-config $CFG_IV --ex-config $CFG_EX ${PRED_ARGS:-} --out submission.csv"
+cm_run "python predict_test.py --iv-config $CFG_IV --ex-config $CFG_EX ${PRED_ARGS:-} --out ${OUT:-submission.csv}"

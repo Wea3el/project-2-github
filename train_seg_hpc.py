@@ -22,7 +22,10 @@ ap.add_argument("--epochs", type=int, default=None, help="override (for quick te
 ap.add_argument("--max-regions", type=int, default=None, help="for quick tests")
 args = ap.parse_args()
 
+if args.config.endswith("_tta"):   # test-time-augmentation variant: the model is the base config's
+    args.config = args.config[:-4]
 cfg = dict(CONFIGS[args.config])
+args.seed = cfg.get("seed", args.seed)
 if args.epochs:
     cfg["epochs"] = args.epochs
 out = run_dir(args.config, args.mod, args.fold)
@@ -111,6 +114,10 @@ for ep in range(start, E):
         imgi, lbl = transforms.random_rotate_and_resize([X[i] for i in inds], Y=[Y[i] for i in inds],
                                                         rescale=rescale[:len(inds)], scale_range=0.5,
                                                         xy=(cfg["bsize"], cfg["bsize"]))[:2]
+        if cfg.get("aug"):  # per-crop brightness/contrast jitter + noise on the image channel
+            k = len(inds)
+            imgi[:, 0] = (imgi[:, 0] * np.random.uniform(0.7, 1.4, (k, 1, 1)) + np.random.uniform(-0.15, 0.15, (k, 1, 1))
+                          + np.random.normal(0, 1, imgi[:, 0].shape) * np.random.uniform(0, 0.05, (k, 1, 1))).astype(np.float32)
         y = net(torch.from_numpy(imgi).to(device))[0]
         loss = cptrain._loss_fn_seg(lbl, y, device)
         opt.zero_grad(); loss.backward(); opt.step()
