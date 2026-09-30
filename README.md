@@ -122,8 +122,19 @@ PRED_ARGS="--pairs oof" OUT=submission_pairs.csv bash submit_full.sh cyto3_x2 cy
 ```bash
 OUT=submission_tta.csv PRED_ARGS="--cp-iv -0.5 --cp-ex 0 --thr 0.2" bash submit_full.sh cyto3_x2 cyto3_x3_tta
 ```
-Config names: `<config>_tta` = that model with test-time augmentation; `a+b` = ensemble of a and b
-(same upsampling), e.g. `cyto3_x3+cyto3_x3_lr1`.
+Config names: `<config>_tta` = that model with test-time augmentation; `<config>_auto` = that model
+rescaled per region so the median cell size matches training (for test mice with bigger or smaller
+cells); `a+b` = ensemble of a and b (same upsampling), e.g. `cyto3_x3+cyto3_x3_lr1`.
+
+**D. Registration variants (CPU only).** A pipeline variant is written `<pair data>+option=value...`
+(options in `cm_pipeline.METHOD_DEFAULTS`: `weak=keep` keeps regions whose registration is not
+confident instead of dropping them, `zwin`/`zalone` lower the confidence needed, `bright=0.5`
+registers with the brightest half of the in-vivo cells, `grow_iv`/`grow_ex` grow the masks). Compare
+them with the current models:
+```bash
+EVAL_ARGS="--tag reg --configs cyto3_x2,cyto3_x3 --iv-top 0 --iv-extra cyto3_x3:-1,cyto3_x2:-0.5 --ex-top 0 --ex-extra cyto3_x3 --ex-cps 0 --pairs oof,oof+weak=keep,oof+zwin=3+zalone=6,oof+bright=0.5,oof+weak=keep+zwin=3+zalone=6" EVAL_SHARDS=6 bash submit_eval.sh
+# result: runs/best_config_reg.json; use a variant for the test set with PRED_ARGS="--pairs oof+weak=keep ..."
+```
 
 ## Monitoring and results
 ```bash

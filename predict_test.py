@@ -25,6 +25,8 @@ thr = args.thr if args.thr is not None else b.get("thr", 0.1)
 pairs = args.pairs or b.get("pairs", "gt")
 print(f"in-vivo: {ivc} cp={cpi} | ex-vivo: {exc} cp={cpe} | pair thr={thr} | pair classifier: {pairs}", flush=True)
 
+from cm_pipeline import parse_method, grow_masks
+pairs, opt = parse_method(pairs)
 clf = None
 if pairs == "gt":
     try:
@@ -39,11 +41,12 @@ sample = pd.read_csv(os.path.join(DATA, "sample_submission.csv"))
 items = []
 for sid in sample.sample_id:
     iv, ex = load_images(sid, "hidden_test")
-    dP, cp, up = load_flows(run_dir(ivc, "iv", args.iv_fold), sid); liv = masks_from_flows(dP, cp, cpi, up)
-    dP, cp, up = load_flows(run_dir(exc, "ex", args.ex_fold), sid); lex = masks_from_flows(dP, cp, cpe, up)
+    dP, cp, up = load_flows(run_dir(ivc, "iv", args.iv_fold), sid); liv = grow_masks(masks_from_flows(dP, cp, cpi, up), opt["grow_iv"])
+    dP, cp, up = load_flows(run_dir(exc, "ex", args.ex_fold), sid); lex = grow_masks(masks_from_flows(dP, cp, cpe, up), opt["grow_ex"])
     items.append(dict(sid=sid, iv_img=iv, ex_img=ex, liv=liv, lex=lex))
     print(sid, int(liv.max()), int(lex.max()), flush=True)
-pairs, log = match_regions(items, lambda s: clf, thrs=(thr,), verbose=True)
+pairs, log = match_regions(items, lambda s: clf, thrs=(thr,), verbose=True, weak=opt["weak"], zwin=opt["zwin"],
+                           zalone=opt["zalone"], bright=opt["bright"])
 sub = pd.DataFrame([to_rows(it["sid"], it["liv"], it["lex"], pairs[thr][it["sid"]]) for it in items])
 
 # format checks (same rules as the competition)

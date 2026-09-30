@@ -86,18 +86,20 @@ def stage_b(task):
         return out_fn
     fold, (ivc, ivcp), (exc, excp), ptag = task
     t0 = time.time()
-    from cm_pipeline import match_regions, score
-    clf = fit_clf(ptag, fold)
+    from cm_pipeline import match_regions, score, parse_method, grow_masks
+    pairs_data, opt = parse_method(ptag)
+    clf = fit_clf(pairs_data, fold)
     items, gts = [], {}
     for sid in training_ids(subjects=[fold]):
         iv, ex = load_images(sid, "training")
         dP, cp, up = load_flows(run_dir(ivc, "iv", fold), sid)
-        liv = masks_from_flows(dP, cp, ivcp, up)
+        liv = grow_masks(masks_from_flows(dP, cp, ivcp, up), opt["grow_iv"])
         dP, cp, up = load_flows(run_dir(exc, "ex", fold), sid)
-        lex = masks_from_flows(dP, cp, excp, up)
+        lex = grow_masks(masks_from_flows(dP, cp, excp, up), opt["grow_ex"])
         items.append(dict(sid=sid, iv_img=iv, ex_img=ex, liv=liv, lex=lex))
         gts[sid] = gt_labels(sid)
-    pairs, log = match_regions(items, lambda s: clf, thrs=tuple(THR_GRID))
+    pairs, log = match_regions(items, lambda s: clf, thrs=tuple(THR_GRID), weak=opt["weak"], zwin=opt["zwin"],
+                               zalone=opt["zalone"], bright=opt["bright"])
     out = []
     for t in THR_GRID:
         pred = {it["sid"]: (it["liv"], it["lex"], pairs[t][it["sid"]]) for it in items}
@@ -223,7 +225,8 @@ if __name__ == "__main__":
     ap.add_argument("--ex-top", type=int, default=4, help="best ex-vivo configs (by verified-cell hits) carried into stage B")
     ap.add_argument("--ex-extra", default="cyto3_x3", help="ex-vivo configs always included")
     ap.add_argument("--ex-cps", default="-0.5,0,0.5")
-    ap.add_argument("--pairs", default="gt", help="pair classifiers to compare: gt, oof, both (comma list)")
+    ap.add_argument("--pairs", default="gt", help="pipeline variants to compare (comma list): pair data gt / oof / both, "
+                    "optionally with options, e.g. oof+weak=keep+bright=0.5 (see cm_pipeline.METHOD_DEFAULTS)")
     ap.add_argument("--tag", default="", help="name for this evaluation (keeps its task list / results apart)")
     args = ap.parse_args()
     t0 = time.time()

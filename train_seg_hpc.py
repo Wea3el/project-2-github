@@ -22,8 +22,9 @@ ap.add_argument("--epochs", type=int, default=None, help="override (for quick te
 ap.add_argument("--max-regions", type=int, default=None, help="for quick tests")
 args = ap.parse_args()
 
-if args.config.endswith("_tta"):   # test-time-augmentation variant: the model is the base config's
-    args.config = args.config[:-4]
+for suffix in ("_tta", "_auto"):   # inference-only variants: the model is the base config's
+    if args.config.endswith(suffix):
+        args.config = args.config[:-len(suffix)]
 cfg = dict(CONFIGS[args.config])
 args.seed = cfg.get("seed", args.seed)
 if args.epochs:

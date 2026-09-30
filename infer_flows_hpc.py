@@ -9,7 +9,7 @@ import numpy as np, pandas as pd, torch
 
 from common import DATA, training_ids, load_images, run_dir, flows_path
 from configs import CONFIGS
-from seg_infer import load_cp, segment
+from seg_infer import load_cp, segment, median_diam_lab, TRAIN_DIAM
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--mod", required=True, choices=["iv", "ex"])
@@ -22,7 +22,8 @@ args = ap.parse_args()
 
 rd = run_dir(args.config, args.mod, args.fold)             # where the flows go
 tta = args.config.endswith("_tta")                          # "<config>_tta": that model + test-time augmentation
-base = args.config[:-4] if tta else args.config
+auto = args.config.endswith("_auto")                        # "<config>_auto": that model, rescaled per region so the
+base = args.config[:-4] if tta else args.config[:-5] if auto else args.config   # median cell size matches training
 split = args.split or ("hidden_test" if args.fold == "full" else "training")
 up = float(CONFIGS[base]["up"])
 if split == "training":
@@ -41,12 +42,20 @@ for sid in ids:
         continue
     iv, ex = load_images(sid, split)
     img = iv if args.mod == "iv" else ex
-    _, fl = segment(model, img, up=up, cellprob=0.0, return_flows=True, augment=tta)
+    masks, fl = segment(model, img, up=up, cellprob=0.0, return_flows=True, augment=tta)
+    up_used = up
+    if auto:  # test mice can have larger/smaller cells: bring the median diameter to the training size
+        d = median_diam_lab(masks)
+        r = TRAIN_DIAM[args.mod] / d if d else 1.0
+        if abs(r - 1) > 0.10:
+            up_used = up * float(np.clip(r, 0.7, 1.4))
+            _, fl = segment(model, img, up=up_used, cellprob=0.0, return_flows=True)
+        print(f"  {sid}: median diameter {d if d is None else round(d, 1)} px -> upsampling {up_used:.2f}", flush=True)
     tmp = fn + f".{os.getpid()}.tmp.npz"
     # float32 for final (test-set) outputs so the submission is reproduced exactly; float16 is plenty
     # for cross-validation folds and halves the disk space
     dt = np.float32 if args.fold == "full" else np.float16
-    np.savez_compressed(tmp, dP=fl[1].astype(dt), cellprob=fl[2].astype(dt), up=up)
+    np.savez_compressed(tmp, dP=fl[1].astype(dt), cellprob=fl[2].astype(dt), up=up_used)
     os.replace(tmp, fn)
     print(sid, f"{time.time() - t0:.0f}s", flush=True)
 open(os.path.join(rd, "flows", f"_done_{split}"), "w").write(str(len(ids)))

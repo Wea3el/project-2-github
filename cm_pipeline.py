@@ -4,24 +4,60 @@ import json
 import numpy as np, pandas as pd
 
 from cmutil import label_to_instances
-from match import cell_table
-from pipeline import region_candidates, consensus_pick, region_pairs
+from match import cell_table, register_region
+from pipeline import consensus_pick, region_pairs
 from consensus2 import group_register
 
+# Pipeline variants, written "<pair data>[+option=value...]", e.g. "oof+weak=keep+bright=0.5":
+#   weak     drop | keep   regions whose registration is not confident (default: drop them)
+#   zwin     4.0           confidence needed for a registration that agrees with the mouse's consensus
+#   zalone   8.0           confidence needed for a registration that does not
+#   bright   1.0           fraction of the brightest in-vivo cells used to find the registration
+#   grow_iv  0 / grow_ex 0 grow every predicted mask by this many pixels (without merging cells)
+METHOD_DEFAULTS = dict(weak="drop", zwin=4.0, zalone=8.0, bright=1.0, grow_iv=0, grow_ex=0)
 
-def match_regions(items, clf_for, thrs=(0.1,), weak="drop", verbose=False, feats=None):
+
+def parse_method(spec):
+    """'oof+weak=keep+grow_ex=1' -> ('oof', {options}); unknown options raise KeyError."""
+    pairs, *kv = spec.split("+")
+    o = dict(METHOD_DEFAULTS)
+    for x in kv:
+        k, v = x.split("=")
+        o[k] = type(METHOD_DEFAULTS[k])(v)
+    return pairs, o
+
+
+def grow_masks(lab, px):
+    if not px:
+        return lab
+    from skimage.segmentation import expand_labels
+    return expand_labels(lab, int(px)).astype(lab.dtype)
+
+
+def _reg_points(T, frac):
+    """in-vivo points used for registration: the brightest `frac` of the cells (all cells if frac >= 1)"""
+    xy = T["xy"]
+    if frac >= 1 or len(xy) < 20 or "inten" not in T:
+        return xy
+    k = max(20, int(round(len(xy) * frac)))
+    return xy[np.argsort(-T["inten"])[:k]]
+
+
+def match_regions(items, clf_for, thrs=(0.1,), weak="drop", verbose=False, feats=None, zwin=4.0, zalone=8.0, bright=1.0):
     """items: list of dict(sid, iv_img, ex_img, liv, lex). clf_for(sid) -> fitted classifier.
     Returns {thr: {sid: [(iv_label, ex_label), ...]}}, log DataFrame.
     feats (dict, optional) receives {sid: (iv labels, ex labels, features)} of every candidate pair."""
     info, data, cands, shapes = {}, {}, {}, {}
     for it in items:
         sid = it["sid"]
-        Tiv, Tex, res = region_candidates(it["liv"], it["lex"], it["iv_img"], it["ex_img"])
+        Tiv, Tex = cell_table(it["liv"], it["iv_img"]), cell_table(it["lex"], it["ex_img"])
+        civ_r = _reg_points(Tiv, bright)
+        res = register_region(civ_r, Tex["xy"], it["ex_img"].shape) if len(civ_r) >= 3 and len(Tex["xy"]) >= 3 else []
         info[sid] = (Tiv, Tex, it["iv_img"].shape)
-        data[sid] = (Tiv["xy"], Tex["xy"], it["ex_img"].shape); cands[sid] = res; shapes[sid] = it["ex_img"].shape
+        data[sid] = (civ_r, Tex["xy"], it["ex_img"].shape); cands[sid] = res; shapes[sid] = it["ex_img"].shape
     groups = {s: s.split("__")[0] + str(shapes[s]) for s in cands}
     pick = consensus_pick(cands, groups=groups)
-    new = group_register(data, cands, groups, pick, verbose=verbose)
+    new = group_register(data, cands, groups, pick, z_alone=zalone, z_win=zwin, verbose=verbose)
     out = {t: {} for t in thrs}
     log = []
     for sid in cands:
