@@ -15,6 +15,7 @@
 # model's outputs on the held-out mouse. Resumes from its checkpoint if preempted and requeued.
 source "$CM_HOME/hpc_env.sh"
 read CFG MOD FOLD <<< "$(python3 "$CM_HOME/tasks.py" get "$SLURM_ARRAY_TASK_ID")"
+case "$CFG" in cpsam*) OVERLAY="$SAM_OVERLAY";; esac   # Cellpose-SAM runs on cellpose 4
 echo "task $SLURM_ARRAY_TASK_ID: config=$CFG mod=$MOD held-out=$FOLD  (restart count ${SLURM_RESTART_COUNT:-0})"
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"; nvidia-smi --query-gpu=index,name,compute_mode --format=csv
 cm_run "python train_seg_hpc.py --mod $MOD --config $CFG --fold $FOLD && \

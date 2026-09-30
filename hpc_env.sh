@@ -3,6 +3,8 @@
 export OVERLAY="${OVERLAY:-/scratch/$USER/overlay/cellmatch.ext3}"   # built by setup_overlay.sh
 export IMAGE="${IMAGE:-/share/apps/images/cuda12.1.1-cudnn8.9.0-devel-ubuntu22.04.2.sif}"
 export CONDA_ENV="${CONDA_ENV:-/ext3/envs/cellmatch}"
+# Cellpose-SAM configs (cpsam*) need cellpose 4: same layout, own overlay (bash submit_setup.sh --sam)
+export SAM_OVERLAY="${SAM_OVERLAY:-/scratch/$USER/overlay/cellsam.ext3}"
 # ----------------------------------------------------------------------------------------
 export CM_HOME="${CM_HOME:-/scratch/$USER/project-2-github}"
 export CM_DATA="${CM_DATA:-$CM_HOME/data}"

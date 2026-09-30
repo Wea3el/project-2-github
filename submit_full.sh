@@ -15,6 +15,7 @@ DEP=$(bash ./submit_setup.sh --dep)   # empty once the environment is built
 export BEST=${BEST:-runs/best_config.json} OUT=${OUT:-submission.csv}
 best() { python3 -c "import json; print(json.load(open('$BEST'))['$1'])"; }
 export CFG_IV=${1:-$(best iv_config)} CFG_EX=${2:-$(best ex_config)}
+case "$CFG_IV $CFG_EX" in *cpsam*) DEP=$(bash ./submit_setup.sh --sam --dep);; esac   # Cellpose-SAM: own overlay
 if [ ! -f "$BEST" ] && [ -z "$PRED_ARGS" ]; then
   PRED_ARGS="--cp-iv -1 --cp-ex 0 --thr 0.1"   # defaults of submission v4
 fi

@@ -144,6 +144,21 @@ bash submit_select.sh cv     # held-out score of every version and selection rul
 bash submit_select.sh test   # the submission -> submission_sel.csv (submit only if cv shows a clear gain)
 ```
 
+**F. Cellpose-SAM (GPU, 12 cross-validation tasks).** Cellpose 4's `cpsam_v2` model (a ViT-L image
+encoder from Segment Anything, trained on cells 7.5-120 px across) fine-tuned per modality with its
+authors' recipe (AdamW, lr 1e-5, weight decay 0.1, batch 1, 100 epochs) at 3x and 2x upsampling
+(`cpsam2_x3`, `cpsam2_x2` in `configs.py`). It needs cellpose 4, so it runs in its own overlay,
+`/scratch/$USER/overlay/cellsam.ext3`. The first run queues that build (`submit_setup.sh --sam`, a
+~20 min CPU job that also downloads the weights) and the GPU tasks wait for it:
+```bash
+CM_CV_TASKS="cpsam2_x3:iv cpsam2_x3:ex cpsam2_x2:iv cpsam2_x2:ex" \
+EVAL_ARGS="--tag sam --configs cyto3_x3,cyto3_x2,cpsam2_x3,cpsam2_x2 --iv-top 2 --ex-top 2 --pairs oof" bash submit_cv.sh
+# result: runs/best_config_sam.json; a test submission, e.g. with Cellpose-SAM for both images:
+OUT=submission_sam.csv PRED_ARGS="--cp-iv -1 --cp-ex 0 --thr 0.05 --pairs oof" bash submit_full.sh cpsam2_x3_auto cpsam2_x3
+```
+Scoring and prediction (CPU) stay in the Cellpose 3 environment: they only read the cached network
+outputs, and both Cellpose versions turn those into the same masks.
+
 ## Monitoring and results
 ```bash
 squeue -u $USER                      # your jobs
@@ -161,7 +176,7 @@ GPU use: about 1 L4-hour for the fast run and 10–20 for the full comparison (t
 | file | role |
 |---|---|
 | `configs.py` | training configurations and evaluation grids |
-| `train_seg_hpc.py` | resumable Cellpose training / cyto3 fine-tuning |
+| `train_seg_hpc.py` | resumable Cellpose training / cyto3 and Cellpose-SAM fine-tuning |
 | `infer_flows_hpc.py` | runs a model and caches its outputs per region |
 | `select_versions.py`, `submit_select.sh` | per-region choice between versions of the in-vivo masks |
 | `build_pairs_oof.py`, `submit_pairs.sh` | pair classifier from out-of-fold predicted masks |
@@ -171,6 +186,6 @@ GPU use: about 1 L4-hour for the fast run and 10–20 for the full comparison (t
 | `cmutil.py`, `segdata.py`, `seg_infer.py`, `shape_ops.py` | utilities, metric, Cellpose inference |
 | `weights/` | current segmentation weights (`full_iv`, `full_ex`) and pair classifier |
 | `cluster.sh` | SLURM account + GPU/CPU partitions used by all submit scripts |
-| `setup_overlay.sh`, `submit_setup.sh` | one-time build of the Singularity overlay + conda env (as a CPU job) |
+| `setup_overlay.sh`, `submit_setup.sh` | one-time build of the Singularity overlay + conda env (as a CPU job); `--sam`: the Cellpose-SAM overlay |
 | `hpc_env.sh`, `setup_env.sh`, `submit_*.sh`, `jobs/*.sbatch` | HPC job scripts |
 | `cellmatch_colab_train.ipynb` | the same runs on Google Colab (expects the code and data in `MyDrive/cellmatch/`) |

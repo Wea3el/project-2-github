@@ -31,6 +31,11 @@ CONFIGS = {
     "cyto3_x3_s2": dict(pretrained="cyto3", up=3, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005, seed=2),
     "cyto3_x2_s1": dict(pretrained="cyto3", up=2, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005, seed=1),
     "cyto3_x2_s2": dict(pretrained="cyto3", up=2, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005, seed=2),
+    # Cellpose-SAM (cellpose 4, runs in its own overlay, see README 6F): the pretrained "cpsam_v2" ViT-L
+    # fine-tuned with its authors' recipe (AdamW, lr 1e-5, weight decay 0.1, batch 1, 100 epochs, 256 px crops).
+    # It was trained on cells 7.5-120 px across (mean 30), so native ~10 px cells are upsampled 3x / 2x.
+    "cpsam2_x3": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1),
+    "cpsam2_x2": dict(pretrained="cpsam_v2", up=2, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1),
     # the shipped weights behind submissions v3/v4 (trained on all three mice): only for
     # predictions (runs/shipped/<mod>/full) or sanity checks, never for cross-validation
     "shipped": dict(pretrained=None, nbase=(16, 32, 64, 128), up=1),

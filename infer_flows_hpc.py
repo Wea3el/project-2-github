@@ -9,7 +9,7 @@ import numpy as np, pandas as pd, torch
 
 from common import DATA, training_ids, load_images, run_dir, flows_path
 from configs import CONFIGS
-from seg_infer import load_cp, segment, median_diam_lab, TRAIN_DIAM
+from seg_infer import load_cp, load_sam, segment, median_diam_lab, TRAIN_DIAM
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--mod", required=True, choices=["iv", "ex"])
@@ -33,7 +33,8 @@ else:
 if args.max_regions:
     ids = ids[:args.max_regions]
 os.makedirs(os.path.join(rd, "flows"), exist_ok=True)
-model = load_cp(args.model or os.path.join(run_dir(base, args.mod, args.fold), "model"), up=up)
+mpath = args.model or os.path.join(run_dir(base, args.mod, args.fold), "model")
+model = load_sam(mpath) if str(CONFIGS[base].get("pretrained")).startswith("cpsam") else load_cp(mpath, up=up)
 torch.set_num_threads(max(1, (os.cpu_count() or 2)))
 t0 = time.time()
 for sid in ids:

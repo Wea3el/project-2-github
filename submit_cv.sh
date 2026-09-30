@@ -6,6 +6,7 @@ set -e
 cd "$(dirname "$0")"; export CM_HOME="$(pwd)"; mkdir -p logs
 source ./cluster.sh
 DEP=$(bash ./submit_setup.sh --dep)   # empty once the environment is built
+case "${CM_CV_TASKS:-}" in *cpsam*) DEP=$(bash ./submit_setup.sh --sam --dep);; esac   # Cellpose-SAM: own overlay
 N=$(python3 tasks.py count)
 JID=$(sbatch --parsable $GPU_OPTS $DEP --kill-on-invalid-dep=yes --export=ALL,CM_HOME="$CM_HOME" --array=0-$((N - 1)) jobs/train_cv.sbatch); JID=${JID%%;*}
 echo "training array job $JID with $N tasks"

@@ -1,10 +1,13 @@
-"""Cellpose inference helpers for the from-scratch models."""
+"""Cellpose inference helpers: Cellpose 3 U-Nets (from scratch or fine-tuned cyto3) and fine-tuned Cellpose-SAM."""
 import os
 import numpy as np
 import torch
 import cv2
 from cellpose import models
-from cellpose.resnet_torch import CPnet
+try:
+    from cellpose.resnet_torch import CPnet
+except ImportError:  # cellpose 4 (the Cellpose-SAM overlay) has no U-Net; only load_sam is used there
+    CPnet = torch.nn.Module
 from segdata import norm_img
 import torch.nn.functional as F
 
@@ -39,13 +42,22 @@ def load_cp(path, nbase=None, up=1.0):
     return m
 
 
+def load_sam(path):
+    """a fine-tuned Cellpose-SAM model (cellpose 4)"""
+    return models.CellposeModel(gpu=torch.cuda.is_available() and os.environ.get("CM_CPU", "0") != "1",
+                                pretrained_model=path)
+
+
 def segment(model, img, up=1.0, cellprob=0.0, flow=0.4, min_size=15, tile_overlap=0.1, augment=False, return_flows=False,
             resample=True):
     x = norm_img(img)
-    masks, flows, _ = model.eval(x, channels=[0, 0], normalize=False, diameter=None, rescale=up,
-                                 cellprob_threshold=cellprob, flow_threshold=flow, min_size=min_size,
-                                 tile_overlap=tile_overlap, augment=augment, bsize=224,
-                                 resample=resample)
+    kw = dict(normalize=False, cellprob_threshold=cellprob, flow_threshold=flow, min_size=min_size,
+              tile_overlap=tile_overlap, augment=augment, resample=resample)
+    if getattr(model, "backbone", "") == "sam_vitl":
+        # cellpose 4 ignores `rescale`: it upsamples by 30/diameter; flows come back at the native size, as below
+        masks, flows, _ = model.eval(x, diameter=30.0 / up, bsize=256, batch_size=32, **kw)
+    else:
+        masks, flows, _ = model.eval(x, channels=[0, 0], diameter=None, rescale=up, bsize=224, **kw)
     masks = masks.astype(np.int32)
     if return_flows:
         return masks, flows

@@ -15,6 +15,7 @@
 # mice, then cache its outputs on the hidden test set. Needs CFG_IV and CFG_EX (see submit_full.sh).
 source "$CM_HOME/hpc_env.sh"
 read CFG MOD FOLD <<< "$(python3 "$CM_HOME/tasks.py" full "$CFG_IV" "$CFG_EX" get "$SLURM_ARRAY_TASK_ID")"
+case "$CFG" in cpsam*) OVERLAY="$SAM_OVERLAY";; esac   # Cellpose-SAM runs on cellpose 4
 echo "final model: config=$CFG mod=$MOD (restart count ${SLURM_RESTART_COUNT:-0})"
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"; nvidia-smi --query-gpu=index,name,compute_mode --format=csv
 if [ "$CFG" = "shipped" ]; then
