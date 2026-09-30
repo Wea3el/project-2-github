@@ -136,6 +136,14 @@ EVAL_ARGS="--tag reg --configs cyto3_x2,cyto3_x3 --iv-top 0 --iv-extra cyto3_x3:
 # result: runs/best_config_reg.json; use a variant for the test set with PRED_ARGS="--pairs oof+weak=keep ..."
 ```
 
+**E. Per-region choice between mask versions (CPU only).** Small changes to the in-vivo masks move
+the registration of some regions. This runs the pipeline once per version (model and cellprob
+threshold) and keeps, per region, the version the pair classifier is most confident about:
+```bash
+bash submit_select.sh cv     # held-out score of every version and selection rule -> runs/select_cv.csv
+bash submit_select.sh test   # the submission -> submission_sel.csv (submit only if cv shows a clear gain)
+```
+
 ## Monitoring and results
 ```bash
 squeue -u $USER                      # your jobs
@@ -155,6 +163,7 @@ GPU use: about 1 L4-hour for the fast run and 10–20 for the full comparison (t
 | `configs.py` | training configurations and evaluation grids |
 | `train_seg_hpc.py` | resumable Cellpose training / cyto3 fine-tuning |
 | `infer_flows_hpc.py` | runs a model and caches its outputs per region |
+| `select_versions.py`, `submit_select.sh` | per-region choice between versions of the in-vivo masks |
 | `build_pairs_oof.py`, `submit_pairs.sh` | pair classifier from out-of-fold predicted masks |
 | `evaluate_cv.py`, `submit_eval.sh` | leave-one-mouse-out scoring with the competition metric (resumable, split over CPU jobs) |
 | `predict_test.py` | test-set masks → registration → pairs → `submission.csv` |
