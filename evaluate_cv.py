@@ -49,7 +49,7 @@ def fit_clf(pairs, fold):
     from sklearn.ensemble import HistGradientBoostingClassifier
     rows = []
     for k in (["gt", "oof"] if pairs == "both" else [pairs]):
-        rows += pickle.load(open(os.path.join(ROOT, "weights", PAIR_FILES[k]), "rb"))
+        rows += pickle.load(open(os.path.join(ROOT, "weights", PAIR_FILES.get(k, f"pairs_{k}.pkl")), "rb"))  # other names: weights/pairs_<name>.pkl
     tr = [r for r in rows if r["sid"].split("__")[0] != fold and len(r["y"])]
     return HistGradientBoostingClassifier(max_iter=200, learning_rate=0.05, max_leaf_nodes=15, min_samples_leaf=20,
                                           l2_regularization=1.0, random_state=0).fit(

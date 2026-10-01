@@ -8,7 +8,7 @@ import os, sys, json, time, argparse
 import numpy as np
 import torch
 
-from common import gt_labels, training_ids, load_images, run_dir
+from common import DATA, gt_labels, training_ids, load_images, run_dir, load_flows, masks_from_flows
 from configs import CONFIGS
 from segdata import norm_img, make_tiles, median_diameter
 
@@ -61,6 +61,19 @@ for sid in ids:
     tiles += ti; tlabs += tl
     diams.append(median_diameter(lab))
 print(f"{len(ids)} regions -> {len(tiles)} tiles, median diameter {np.median(diams):.2f}px", flush=True)
+if cfg.get("pseudo"):  # self-training: the unlabelled test images, labelled with an earlier model's masks
+    import pandas as pd
+    pc, pcp = cfg["pseudo"][args.mod].rsplit(":", 1)
+    for sid in pd.read_csv(os.path.join(DATA, "sample_submission.csv")).sample_id:
+        img = load_images(sid, "hidden_test")[0 if args.mod == "iv" else 1]
+        key = hash(img.tobytes())
+        if key in seen:
+            continue
+        seen.add(key)
+        dP, prob, pup = load_flows(run_dir(pc, args.mod, "full"), sid)
+        ti, tl = make_tiles(norm_img(img), masks_from_flows(dP, prob, float(pcp), pup), tile=128, step=112, rng=rng)
+        tiles += ti; tlabs += tl
+    print(f"+ test images labelled by {pc} at cellprob {pcp} -> {len(tiles)} tiles", flush=True)
 # flow targets are computed on the CPU: Cellpose 3.1.1.3's GPU version crashes on tiles that contain a
 # single foreground pixel (np.stack on a 0-d array in _extend_centers_gpu); the CPU version is fine
 flows = dynamics.labels_to_flows(tlabs, device=torch.device("cpu"))  # each (4,H,W): label, mask, flowY, flowX
@@ -119,12 +132,15 @@ for ep in range(start, E):
         inds = perm[k:k + cfg["batch"]]
         if sam:  # cellpose 4's augmentation runs on the GPU and returns tensors
             imgi, lbl = transforms.random_rotate_and_resize([X[i] for i in inds], lbls=[Y[i] for i in inds],
-                                                            rescale=rescale[:len(inds)], scale_range=0.5,
+                                                            rescale=rescale[:len(inds)], scale_range=cfg.get("sr", 0.5),
                                                             bsize=cfg["bsize"], device=device)[:2]
+            if cfg.get("aug"):  # same brightness/contrast jitter + noise as below, on the GPU tensors
+                u = lambda lo, hi: torch.empty((len(inds), 1, 1), device=device).uniform_(lo, hi)
+                imgi[:, 0] = imgi[:, 0] * u(0.7, 1.4) + u(-0.15, 0.15) + torch.randn_like(imgi[:, 0]) * u(0, 0.05)
             y = net(imgi)[0]
         else:
             imgi, lbl = transforms.random_rotate_and_resize([X[i] for i in inds], Y=[Y[i] for i in inds],
-                                                            rescale=rescale[:len(inds)], scale_range=0.5,
+                                                            rescale=rescale[:len(inds)], scale_range=cfg.get("sr", 0.5),
                                                             xy=(cfg["bsize"], cfg["bsize"]))[:2]
             if cfg.get("aug"):  # per-crop brightness/contrast jitter + noise on the image channel
                 k = len(inds)

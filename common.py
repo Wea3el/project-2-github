@@ -44,11 +44,13 @@ def training_ids(subjects=None, exclude=None):
 
 def masks_from_flows(dP, cellprob, cp_thr, up=1.0, flow_threshold=0.4, min_size=15):
     """Same mask reconstruction Cellpose's eval() performs (niter scaled by 1/rescale)."""
+    import inspect
     from cellpose import dynamics
-    niter = int(round(200 / up))
-    m = dynamics.resize_and_compute_masks(np.asarray(dP, np.float32), np.asarray(cellprob, np.float32), niter=niter,
-                                          cellprob_threshold=cp_thr, flow_threshold=flow_threshold,
-                                          interp=True, resize=None, min_size=min_size, max_size_fraction=0.4)
+    kw = dict(niter=int(round(200 / up)), cellprob_threshold=cp_thr, flow_threshold=flow_threshold, resize=None,
+              min_size=min_size, max_size_fraction=0.4)
+    if "interp" in inspect.signature(dynamics.resize_and_compute_masks).parameters:  # cellpose 3 (4 always interpolates)
+        kw["interp"] = True
+    m = dynamics.resize_and_compute_masks(np.asarray(dP, np.float32), np.asarray(cellprob, np.float32), **kw)
     return np.asarray(m).astype(np.int32)
 
 

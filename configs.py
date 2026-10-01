@@ -36,6 +36,20 @@ CONFIGS = {
     # It was trained on cells 7.5-120 px across (mean 30), so native ~10 px cells are upsampled 3x / 2x.
     "cpsam2_x3": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1),
     "cpsam2_x2": dict(pretrained="cpsam_v2", up=2, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1),
+    # with the brightness/contrast/noise augmentation of cyto3_x3_aug (robustness to the test mice)
+    "cpsam2_x3_aug": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1, aug=True),
+    "cpsam2_x3_long": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=300, nimg=128, batch=1, lr=1e-5, wd=0.1),
+    "cpsam_x3": dict(pretrained="cpsam", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1),  # April 2025 weights
+    # wider size augmentation (cells scaled 0.5-1.5x instead of 0.75-1.25x): ground-truth cell sizes differ a lot
+    # between mice (median ex-vivo cell area 54-98 px^2 on the three training mice)
+    "cyto3_x3_sr": dict(pretrained="cyto3", up=3, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005, sr=1.0),
+    "cpsam2_x3_sr": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1, sr=1.0),
+    # self-training on the unlabelled test images: they are added to the training tiles with the masks of the
+    # current best submission (v13) as labels
+    "cyto3_x3_pl": dict(pretrained="cyto3", up=3, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005,
+                        pseudo=dict(iv="cyto3_x3_auto:-1", ex="cyto3_x3:0")),
+    "cpsam2_x3_pl": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1,
+                         pseudo=dict(iv="cyto3_x3_auto:-1", ex="cyto3_x3:0")),
     # the shipped weights behind submissions v3/v4 (trained on all three mice): only for
     # predictions (runs/shipped/<mod>/full) or sanity checks, never for cross-validation
     "shipped": dict(pretrained=None, nbase=(16, 32, 64, 128), up=1),

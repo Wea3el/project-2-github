@@ -159,6 +159,38 @@ OUT=submission_sam.csv PRED_ARGS="--cp-iv -1 --cp-ex 0 --thr 0.05 --pairs oof" b
 Scoring and prediction (CPU) stay in the Cellpose 3 environment: they only read the cached network
 outputs, and both Cellpose versions turn those into the same masks.
 
+**G. Test-set variants from cached outputs, and a threshold check.** A submission from outputs that
+already exist (other thresholds, an ensemble `a+b`, ...) needs no GPU, only the prediction job:
+```bash
+export CM_HOME=$PWD; source cluster.sh
+pv() { CFG_IV=$2 CFG_EX=$3 OUT=submission_$1.csv PRED_ARGS="$4" sbatch $CPU_OPTS --export=ALL --job-name=cm_pv_$1 jobs/predict.sbatch; }
+pv t1 cyto3_x3_auto cyto3_x3 "--cp-iv -1 --cp-ex -0.5 --thr 0.05 --pairs oof"      # -> submission_t1.csv
+```
+The thresholds tuned on the training mice did not carry over to the test mice (ex-vivo 0 -> 0.5:
++0.016 held-out, -0.075 on the leaderboard). `calib_check.py` shows how each threshold changes the
+masks per mouse (cells per region, median cell area, cell probability inside the cells; on training
+mice also the ground truth and PQ), training mice from the cross-validation models, test mice from
+the final ones:
+```bash
+sbatch $CPU_OPTS --job-name=cm_calib --cpus-per-task=8 --mem=32G --time=01:00:00 --output=logs/cm_calib_%j.out \
+  --export=ALL,CM_HOME=$PWD --wrap="source $PWD/hpc_env.sh; cm_run 'export OMP_NUM_THREADS=1; python calib_check.py --configs cyto3_x3,cpsam2_x3'"
+```
+
+**H. Training variants judged on the leaderboard.** Each trains one modality on all three mice and
+keeps the other as in v13, so every submission tests one change (no cross-validation: the held-out
+mice did not predict the test mice). New configs in `configs.py`: `*_pl` self-training (the test images
+added with v13's masks as labels), `*_sr` wider size augmentation, `cpsam2_x3_aug` brightness/contrast
+augmentation, `cpsam2_x3_long` 3x longer, `cpsam_x3` the original Cellpose-SAM weights. A config name
+ending in `_auto` is the in-vivo run with per-region size rescaling.
+```bash
+P="--cp-iv -1 --cp-ex 0 --thr 0.05 --pairs oof"
+ex() { OUT=submission_$1.csv PRED_ARGS="$P" bash submit_full.sh cyto3_x3_auto $2; }   # new ex-vivo model
+iv() { OUT=submission_$1.csv PRED_ARGS="$P" bash submit_full.sh $2 cyto3_x3; }        # new in-vivo model
+ex e1 cyto3_x3_pl; iv i1 cyto3_x3_pl_auto
+```
+`predict_test.py --pairs NAME` also reads a pair classifier from `weights/pairs_NAME.pkl`, e.g. one
+built on Cellpose-SAM masks with `build_pairs_oof.py --out weights/pairs_oofsam.pkl`.
+
 ## Monitoring and results
 ```bash
 squeue -u $USER                      # your jobs
@@ -179,6 +211,7 @@ GPU use: about 1 L4-hour for the fast run and 10–20 for the full comparison (t
 | `train_seg_hpc.py` | resumable Cellpose training / cyto3 and Cellpose-SAM fine-tuning |
 | `infer_flows_hpc.py` | runs a model and caches its outputs per region |
 | `select_versions.py`, `submit_select.sh` | per-region choice between versions of the in-vivo masks |
+| `calib_check.py` | how the cell-probability threshold changes the masks, training vs test mice |
 | `build_pairs_oof.py`, `submit_pairs.sh` | pair classifier from out-of-fold predicted masks |
 | `evaluate_cv.py`, `submit_eval.sh` | leave-one-mouse-out scoring with the competition metric (resumable, split over CPU jobs) |
 | `predict_test.py` | test-set masks → registration → pairs → `submission.csv` |
