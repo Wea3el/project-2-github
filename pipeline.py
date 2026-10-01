@@ -81,10 +81,10 @@ def region_candidates(liv, lex, iv, ex):
     return Tiv, Tex, res
 
 
-def region_pairs(Tiv, Tex, reg, iv_shape, r=10.0):
+def region_pairs(Tiv, Tex, reg, iv_shape, r=10.0, cand="hung", u=10.0):
     civ, cex = Tiv["xy"], Tex["xy"]
     P = local_refine(civ, cex, reg["M"])
-    a, b, F = pair_features(civ, cex, P, Tiv, Tex, reg, r=r, iv_shape=iv_shape)
+    a, b, F = pair_features(civ, cex, P, Tiv, Tex, reg, r=r, iv_shape=iv_shape, cand=cand, u=u)
     return a, b, F
 
 

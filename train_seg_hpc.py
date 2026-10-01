@@ -2,7 +2,7 @@
 every few epochs, so a preempted/requeued SLURM job continues where it stopped.
 
 usage: python train_seg_hpc.py --mod ex --config cyto3_x3 --fold subject_db6b8b
-       (--fold = held-out subject for cross-validation, or 'full' to train on all mice)
+       (--fold = held-out subject for cross-validation, 'full' to train on all mice, only_<subject> for one mouse)
 """
 import os, sys, json, time, argparse
 import numpy as np
@@ -43,8 +43,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("device", device, "| config", args.config, cfg, flush=True)
 
 # ------------------------------------------------------------------ data: native-resolution tiles
-holdout = set() if args.fold == "full" else {args.fold}
-ids = training_ids(exclude=holdout)
+# fold: a held-out mouse (train on the other two), "full" (all three), or "only_<mouse>" (that mouse alone: the
+# inner models of the strict nested evaluation, see build_pairs_oof.py --strict)
+if args.fold.startswith("only_"):
+    ids = training_ids(subjects=[args.fold[5:]])
+else:
+    ids = training_ids(exclude=set() if args.fold == "full" else {args.fold})
 if args.max_regions:
     ids = ids[:args.max_regions]
 rng = np.random.default_rng(0)

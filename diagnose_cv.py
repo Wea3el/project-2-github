@@ -5,13 +5,15 @@ through the pipeline, using the models trained without that region's mouse (CPU 
 and sort every predicted pair into correct / wrong in-vivo cell / wrong ex-vivo cell / wrong partner.
 
 usage: python diagnose_cv.py --iv cyto3_x3:-1 --ex cyto3_x3:0 --thr 0.1 [--pairs gt] [--out runs/diag_v6.csv]
+  stages per verified pair: in-vivo / ex-vivo / both cells segmented (IoU > 0.75) -> the right pair among the
+  candidates -> accepted by the classifier; --pairs takes any pipeline variant, e.g. oof+cand=gain+u=8
 """
 import os, argparse
 import numpy as np, pandas as pd
 
-from common import RUNS, gt_labels, training_ids, load_images, masks_from_flows, load_flows, run_dir
+from common import RUNS, gt_labels, training_ids, load_images, load_flows, run_dir
 from configs import SUBJECTS
-from cm_pipeline import match_regions, tp_map, parse_method, grow_masks
+from cm_pipeline import match_regions, tp_map, parse_method, mod_masks, match_kw
 from evaluate_cv import fit_clf
 
 ap = argparse.ArgumentParser()
@@ -29,12 +31,11 @@ for fold in SUBJECTS:
     items, gts = [], {}
     for sid in training_ids(subjects=[fold]):
         iv, ex = load_images(sid, "training")
-        dP, cp, up = load_flows(run_dir(ivc, "iv", fold), sid); liv = grow_masks(masks_from_flows(dP, cp, ivcp, up), opt["grow_iv"])
-        dP, cp, up = load_flows(run_dir(exc, "ex", fold), sid); lex = grow_masks(masks_from_flows(dP, cp, excp, up), opt["grow_ex"])
+        dP, cp, up = load_flows(run_dir(ivc, "iv", fold), sid); liv = mod_masks(dP, cp, ivcp, up, opt, "iv")
+        dP, cp, up = load_flows(run_dir(exc, "ex", fold), sid); lex = mod_masks(dP, cp, excp, up, opt, "ex")
         items.append(dict(sid=sid, iv_img=iv, ex_img=ex, liv=liv, lex=lex)); gts[sid] = gt_labels(sid)
     clf, feats = fit_clf(pairs_data, fold), {}
-    pairs, log = match_regions(items, lambda s: clf, thrs=(args.thr,), feats=feats, weak=opt["weak"], zwin=opt["zwin"],
-                               zalone=opt["zalone"], bright=opt["bright"])
+    pairs, log = match_regions(items, lambda s: clf, thrs=(args.thr,), feats=feats, **match_kw(opt))
     status = dict(zip(log.sid, log.status))
     for it in items:
         sid = it["sid"]; giv, gex, gp = gts[sid]
@@ -61,7 +62,8 @@ for fold in SUBJECTS:
 
 D = pd.DataFrame(rows)
 D.to_csv(args.out, index=False)
-S = D.groupby("mouse")[["gt_pairs", "both_found", "proposed", "accepted", "pred_pairs", "correct", "wrong_iv", "wrong_ex", "wrong_partner"]].sum()
+S = D.groupby("mouse")[["gt_pairs", "iv_found", "ex_found", "both_found", "proposed", "accepted", "pred_pairs", "correct",
+                        "wrong_iv", "wrong_ex", "wrong_partner"]].sum()
 S.loc["all"] = S.sum()
 print("\n", S.to_string())
 print("saved", args.out)

@@ -6,7 +6,7 @@ Flows are read from runs/<config>/<mod>/full/flows (written by infer_flows_hpc.p
 import os, json, argparse, pickle
 import numpy as np, pandas as pd
 
-from common import DATA, RUNS, ROOT, load_images, masks_from_flows, load_flows, run_dir
+from common import DATA, RUNS, ROOT, load_images, load_flows, run_dir
 from cm_pipeline import match_regions, to_rows
 
 ap = argparse.ArgumentParser()
@@ -25,7 +25,7 @@ thr = args.thr if args.thr is not None else b.get("thr", 0.1)
 pairs = args.pairs or b.get("pairs", "gt")
 print(f"in-vivo: {ivc} cp={cpi} | ex-vivo: {exc} cp={cpe} | pair thr={thr} | pair classifier: {pairs}", flush=True)
 
-from cm_pipeline import parse_method, grow_masks
+from cm_pipeline import parse_method, mod_masks, match_kw
 pairs, opt = parse_method(pairs)
 clf = None
 if pairs == "gt":
@@ -41,12 +41,11 @@ sample = pd.read_csv(os.path.join(DATA, "sample_submission.csv"))
 items = []
 for sid in sample.sample_id:
     iv, ex = load_images(sid, "hidden_test")
-    dP, cp, up = load_flows(run_dir(ivc, "iv", args.iv_fold), sid); liv = grow_masks(masks_from_flows(dP, cp, cpi, up), opt["grow_iv"])
-    dP, cp, up = load_flows(run_dir(exc, "ex", args.ex_fold), sid); lex = grow_masks(masks_from_flows(dP, cp, cpe, up), opt["grow_ex"])
+    dP, cp, up = load_flows(run_dir(ivc, "iv", args.iv_fold), sid); liv = mod_masks(dP, cp, cpi, up, opt, "iv")
+    dP, cp, up = load_flows(run_dir(exc, "ex", args.ex_fold), sid); lex = mod_masks(dP, cp, cpe, up, opt, "ex")
     items.append(dict(sid=sid, iv_img=iv, ex_img=ex, liv=liv, lex=lex))
     print(sid, int(liv.max()), int(lex.max()), flush=True)
-pairs, log = match_regions(items, lambda s: clf, thrs=(thr,), verbose=True, weak=opt["weak"], zwin=opt["zwin"],
-                           zalone=opt["zalone"], bright=opt["bright"])
+pairs, log = match_regions(items, lambda s: clf, thrs=(thr,), verbose=True, **match_kw(opt))
 sub = pd.DataFrame([to_rows(it["sid"], it["liv"], it["lex"], pairs[thr][it["sid"]]) for it in items])
 
 # format checks (same rules as the competition)

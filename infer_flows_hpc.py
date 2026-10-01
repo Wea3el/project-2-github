@@ -27,7 +27,10 @@ base = args.config[:-4] if tta else args.config[:-5] if auto else args.config   
 split = args.split or ("hidden_test" if args.fold == "full" else "training")
 up = float(CONFIGS[base]["up"])
 if split == "training":
-    ids = training_ids(subjects=[args.fold]) if args.fold != "full" else training_ids()
+    if args.fold.startswith("only_"):  # a one-mouse model runs on the two other mice
+        ids = training_ids(exclude={args.fold[5:]})
+    else:
+        ids = training_ids(subjects=[args.fold]) if args.fold != "full" else training_ids()
 else:
     ids = list(pd.read_csv(os.path.join(DATA, "sample_submission.csv")).sample_id)
 if args.max_regions:

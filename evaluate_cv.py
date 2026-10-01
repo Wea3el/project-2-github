@@ -44,16 +44,37 @@ PAIR_FILES = {"gt": "pairs_gt.pkl", "oof": "pairs_oof.pkl"}
 
 def fit_clf(pairs, fold):
     """pair classifier fitted without the held-out mouse. pairs: gt (candidates from ground-truth masks,
-    the shipped training set), oof (from out-of-fold predicted masks, build_pairs_oof.py) or both."""
+    the shipped training set), oof (from out-of-fold predicted masks, build_pairs_oof.py), both, or any
+    weights/pairs_<name>.pkl. Rows with an "outer" mouse (build_pairs_oof.py --strict) are used only when
+    that mouse is the one held out, so no row comes from a segmentation model that saw it."""
     import pickle
     from sklearn.ensemble import HistGradientBoostingClassifier
     rows = []
     for k in (["gt", "oof"] if pairs == "both" else [pairs]):
-        rows += pickle.load(open(os.path.join(ROOT, "weights", PAIR_FILES.get(k, f"pairs_{k}.pkl")), "rb"))  # other names: weights/pairs_<name>.pkl
-    tr = [r for r in rows if r["sid"].split("__")[0] != fold and len(r["y"])]
+        rows += pickle.load(open(os.path.join(ROOT, "weights", PAIR_FILES.get(k, f"pairs_{k}.pkl")), "rb"))
+    use = lambda r: r["outer"] == fold if ("outer" in r and fold != "none") else r["sid"].split("__")[0] != fold
+    tr = [r for r in rows if use(r) and len(r["y"])]
     return HistGradientBoostingClassifier(max_iter=200, learning_rate=0.05, max_leaf_nodes=15, min_samples_leaf=20,
                                           l2_regularization=1.0, random_state=0).fit(
         np.concatenate([r["F"] for r in tr]), np.concatenate([r["y"] for r in tr]))
+
+
+_FP = {}
+
+
+def fingerprint(pairs):
+    """short hash of the matching code and of the pair-classifier data; part of every cached result's name,
+    so a change to either recomputes the results instead of reusing stale ones"""
+    if pairs not in _FP:
+        import hashlib
+        h = hashlib.sha1()
+        for f in ("common.py", "match.py", "pipeline.py", "consensus2.py", "cm_pipeline.py"):
+            h.update(open(os.path.join(ROOT, f), "rb").read())
+        for k in (["gt", "oof"] if pairs == "both" else [pairs]):
+            fn = os.path.join(ROOT, "weights", PAIR_FILES.get(k, f"pairs_{k}.pkl"))
+            h.update(open(fn, "rb").read() if os.path.exists(fn) else b"missing")
+        _FP[pairs] = h.hexdigest()[:8]
+    return _FP[pairs]
 
 
 def stage_a(task):
@@ -77,7 +98,9 @@ def stage_a(task):
 
 def b_key(task):
     fold, (ivc, ivcp), (exc, excp), pairs = task
-    return f"{fold}__{ivc}_{ivcp:g}__{exc}_{excp:g}" + ("" if pairs == "gt" else f"__pairs-{pairs}")
+    from cm_pipeline import parse_method
+    return (f"{fold}__{ivc}_{ivcp:g}__{exc}_{excp:g}" + ("" if pairs == "gt" else f"__pairs-{pairs}")
+            + f"__{fingerprint(parse_method(pairs)[0])}")
 
 
 def stage_b(task):
@@ -86,20 +109,19 @@ def stage_b(task):
         return out_fn
     fold, (ivc, ivcp), (exc, excp), ptag = task
     t0 = time.time()
-    from cm_pipeline import match_regions, score, parse_method, grow_masks
+    from cm_pipeline import match_regions, score, parse_method, mod_masks, match_kw
     pairs_data, opt = parse_method(ptag)
     clf = fit_clf(pairs_data, fold)
     items, gts = [], {}
     for sid in training_ids(subjects=[fold]):
         iv, ex = load_images(sid, "training")
         dP, cp, up = load_flows(run_dir(ivc, "iv", fold), sid)
-        liv = grow_masks(masks_from_flows(dP, cp, ivcp, up), opt["grow_iv"])
+        liv = mod_masks(dP, cp, ivcp, up, opt, "iv")
         dP, cp, up = load_flows(run_dir(exc, "ex", fold), sid)
-        lex = grow_masks(masks_from_flows(dP, cp, excp, up), opt["grow_ex"])
+        lex = mod_masks(dP, cp, excp, up, opt, "ex")
         items.append(dict(sid=sid, iv_img=iv, ex_img=ex, liv=liv, lex=lex))
         gts[sid] = gt_labels(sid)
-    pairs, log = match_regions(items, lambda s: clf, thrs=tuple(THR_GRID), weak=opt["weak"], zwin=opt["zwin"],
-                               zalone=opt["zalone"], bright=opt["bright"])
+    pairs, log = match_regions(items, lambda s: clf, thrs=tuple(THR_GRID), **match_kw(opt))
     out = []
     for t in THR_GRID:
         pred = {it["sid"]: (it["liv"], it["lex"], pairs[t][it["sid"]]) for it in items}
@@ -200,7 +222,7 @@ def aggregate(tag):
     P["S_pooled"] = 0.25 * (P.pq_iv + P.pq_ex) + 0.5 * P.f1
     P = P.sort_values("S_pooled", ascending=False)
     pd.set_option("display.width", 200); pd.set_option("display.max_rows", 200)
-    print(f"\n=== Stage B: full score, pooled over held-out mice ({int(P.folds.max())} mice) ===")
+    print(f"\n=== Stage B{' [' + tag[1:] + ']' if tag else ''}: full score, pooled over held-out mice ({int(P.folds.max())} mice) ===")
     print(P[key + ["S_pooled", "S_foldmean", "pq_iv", "pq_ex", "f1", "prec", "rec"]].head(25).round(4).to_string(index=False))
     best = P.iloc[0]
     bj = dict(iv_config=best.iv_config, cp_iv=float(best.cp_iv), ex_config=best.ex_config, cp_ex=float(best.cp_ex),

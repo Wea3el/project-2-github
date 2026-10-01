@@ -141,7 +141,7 @@ the registration of some regions. This runs the pipeline once per version (model
 threshold) and keeps, per region, the version the pair classifier is most confident about:
 ```bash
 bash submit_select.sh cv     # held-out score of every version and selection rule -> runs/select_cv.csv
-bash submit_select.sh test   # the submission -> submission_sel.csv (submit only if cv shows a clear gain)
+LAM=0.2 bash submit_select.sh test   # the submission -> submission_sel.csv, with the best penalty of the cv run
 ```
 
 **F. Cellpose-SAM (GPU, 12 cross-validation tasks).** Cellpose 4's `cpsam_v2` model (a ViT-L image
@@ -191,6 +191,19 @@ ex e1 cyto3_x3_pl; iv i1 cyto3_x3_pl_auto
 `predict_test.py --pairs NAME` also reads a pair classifier from `weights/pairs_NAME.pkl`, e.g. one
 built on Cellpose-SAM masks with `build_pairs_oof.py --out weights/pairs_oofsam.pkl`.
 
+**I. Matching fixes, boundary ablations, failure breakdown, strict validation (mostly CPU).**
+Pipeline variants (`cm_pipeline.METHOD_DEFAULTS`) now also take `cand=gain+u=8` (candidate pairs by an
+assignment in which leaving a cell unmatched costs `u`, so one exact match is no longer traded for two poor
+ones), `cand=all` (every nearby pair is scored by the classifier, then the best one-to-one set is kept; train
+its classifier with `build_pairs_oof.py --method oof+cand=all`, used as `--pairs oofall+cand=all`), and
+`flow_ex=0.6`, `min_ex=10` (and `_iv`) for the Cellpose mask reconstruction. Cached evaluation results carry a
+hash of the matching code and of the pair-classifier data, so changing either recomputes them.
+`diagnose_cv.py` follows every verified pair through segmentation -> candidates -> classifier.
+Strict nested validation: one-mouse models (`CM_CV_FOLDS="only_subject_5d294c ..."`), then
+`build_pairs_oof.py --strict` writes `weights/pairs_oofstrict.pkl`, whose rows for a held-out mouse never
+come from a segmentation model that saw it (`--pairs oofstrict`). `render_pairs.py cv` draws the held-out
+matching against the ground truth, and every prediction job now also writes `viz/<submission>/index.html`.
+
 ## Monitoring and results
 ```bash
 squeue -u $USER                      # your jobs
@@ -212,6 +225,7 @@ GPU use: about 1 L4-hour for the fast run and 10–20 for the full comparison (t
 | `infer_flows_hpc.py` | runs a model and caches its outputs per region |
 | `select_versions.py`, `submit_select.sh` | per-region choice between versions of the in-vivo masks |
 | `calib_check.py` | how the cell-probability threshold changes the masks, training vs test mice |
+| `render_pairs.py` | pictures of the matching per region (test submissions; held-out mice vs ground truth) |
 | `build_pairs_oof.py`, `submit_pairs.sh` | pair classifier from out-of-fold predicted masks |
 | `evaluate_cv.py`, `submit_eval.sh` | leave-one-mouse-out scoring with the competition metric (resumable, split over CPU jobs) |
 | `predict_test.py` | test-set masks → registration → pairs → `submission.csv` |

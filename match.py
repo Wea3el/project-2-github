@@ -170,16 +170,29 @@ def register(civ, cex, wiv=None, wex=None, **kw):
 
 
 # ----------------------------------------------------------------------------- assignment
-def candidate_pairs(P, cex, r=10.0):
-    """Hungarian assignment of transformed in-vivo points P to ex-vivo points with a
-    gate r; returns (i, j, dist, d2_iv, d2_ex) with second-nearest distances."""
+def candidate_pairs(P, cex, r=10.0, cand="hung", u=10.0):
+    """Candidate pairs (in-vivo i, ex-vivo j) between the transformed in-vivo points P and the ex-vivo points
+    within the gate r; returns (i, j, dist, d2_iv, d2_ex) with second-nearest distances.
+      hung  Hungarian assignment that first maximises the number of in-gate pairs, then minimises the total
+            distance (the original rule: it can drop an exact match to make two poor ones)
+      gain  one-to-one assignment maximising the sum of (u - distance): leaving a cell unmatched costs u, so a
+            pair is only worth making if it beats that
+      all   every in-gate edge (not one-to-one; the final one-to-one choice is made after the classifier)"""
     if len(P) == 0 or len(cex) == 0:
         return [np.zeros(0)] * 5
     D = np.linalg.norm(P[:, None, :] - cex[None, :, :], axis=2)
-    C = np.where(D < r, D, 1e4)
-    a, b = linear_sum_assignment(C)
-    ok = C[a, b] < 1e4
-    a, b = a[ok], b[ok]
+    if cand == "all":
+        a, b = np.nonzero(D < r)
+    elif cand == "gain":
+        W = np.where(D < r, u - D, 0.0)
+        a, b = linear_sum_assignment(W, maximize=True)
+        ok = W[a, b] > 0
+        a, b = a[ok], b[ok]
+    else:
+        C = np.where(D < r, D, 1e4)
+        a, b = linear_sum_assignment(C)
+        ok = C[a, b] < 1e4
+        a, b = a[ok], b[ok]
     # second nearest for uniqueness
     Ds = np.sort(D, axis=1)
     d2_iv = Ds[a, 1] if D.shape[1] > 1 else np.full(len(a), 99.0)
@@ -420,8 +433,8 @@ def register_region(civ, cex, ex_shape, topk=12, angles=np.arange(-24, 24.1, 2.0
     return res
 
 
-def pair_features(civ, cex, P, Tiv, Tex, reg, r=10.0, iv_shape=None):
-    a, b, d, d2i, d2e = candidate_pairs(P, cex, r=r)
+def pair_features(civ, cex, P, Tiv, Tex, reg, r=10.0, iv_shape=None, cand="hung", u=10.0):
+    a, b, d, d2i, d2e = candidate_pairs(P, cex, r=r, cand=cand, u=u)
     if len(a) == 0:
         return a, b, np.zeros((0, 14))
     # local iv density (ambiguity) around mapped point

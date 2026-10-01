@@ -14,7 +14,9 @@ else:
     # CM_CV_TASKS="cyto3_x4:ex cyto3_x2_s1:iv ..." limits the run to those (config, modality) pairs
     spec = os.environ.get("CM_CV_TASKS", "").replace(",", " ").split()
     cm = [tuple(x.split(":")) for x in spec] or [(c, m) for c in CV_CONFIGS for m in MODS]
-    T = [(c, m, f) for c, m in cm for f in SUBJECTS]
+    # CM_CV_FOLDS="only_subject_5d294c ..." replaces the held-out mice (one-mouse models for the strict evaluation)
+    folds = os.environ.get("CM_CV_FOLDS", "").split() or SUBJECTS
+    T = [(c, m, f) for c, m in cm for f in folds]
     cmd, rest = sys.argv[1], sys.argv[2:]
 if cmd == "count":
     print(len(T))

@@ -11,4 +11,6 @@
 #SBATCH --error=logs/%x_%j.err
 # CPU only: masks from the cached test-set outputs -> registration -> pairs -> submission.csv
 source "$CM_HOME/hpc_env.sh"
-cm_run "python predict_test.py --iv-config $CFG_IV --ex-config $CFG_EX ${PRED_ARGS:-} --out ${OUT:-submission.csv}"
+# then a picture of every test region: viz/<submission name>/index.html (see render_pairs.py)
+cm_run "python predict_test.py --iv-config $CFG_IV --ex-config $CFG_EX ${PRED_ARGS:-} --out ${OUT:-submission.csv} && \
+        (python render_pairs.py test ${OUT:-submission.csv} || echo 'pictures failed; the submission file is fine')"

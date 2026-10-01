@@ -10,5 +10,5 @@ case "${CM_CV_TASKS:-}" in *cpsam*) DEP=$(bash ./submit_setup.sh --sam --dep);; 
 N=$(python3 tasks.py count)
 JID=$(sbatch --parsable $GPU_OPTS $DEP --kill-on-invalid-dep=yes --export=ALL,CM_HOME="$CM_HOME" --array=0-$((N - 1)) jobs/train_cv.sbatch); JID=${JID%%;*}
 echo "training array job $JID with $N tasks"
-bash ./submit_eval.sh --after "$JID"     # scoring starts when all training tasks have finished
+[ -n "${CM_NO_EVAL:-}" ] || bash ./submit_eval.sh --after "$JID"   # scoring starts when all training tasks have finished
 echo "monitor: squeue -u \$USER"

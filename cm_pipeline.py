@@ -14,7 +14,12 @@ from consensus2 import group_register
 #   zalone   8.0           confidence needed for a registration that does not
 #   bright   1.0           fraction of the brightest in-vivo cells used to find the registration
 #   grow_iv  0 / grow_ex 0 grow every predicted mask by this many pixels (without merging cells)
-METHOD_DEFAULTS = dict(weak="drop", zwin=4.0, zalone=8.0, bright=1.0, grow_iv=0, grow_ex=0)
+#   flow_iv / flow_ex 0.4, min_iv / min_ex 15   Cellpose flow-error threshold and minimum cell size (px)
+#   cand     hung | gain | all   how candidate pairs are chosen (match.candidate_pairs); all = every nearby
+#            pair is scored by the classifier, then a one-to-one assignment maximises the summed (p - thr)
+#   u        10.0          gain: the cost of leaving a cell unmatched (a pair at distance d is worth u - d)
+METHOD_DEFAULTS = dict(weak="drop", zwin=4.0, zalone=8.0, bright=1.0, grow_iv=0, grow_ex=0,
+                       flow_iv=0.4, flow_ex=0.4, min_iv=15, min_ex=15, cand="hung", u=10.0)
 
 
 def parse_method(spec):
@@ -25,6 +30,33 @@ def parse_method(spec):
         k, v = x.split("=")
         o[k] = type(METHOD_DEFAULTS[k])(v)
     return pairs, o
+
+
+def match_kw(opt):
+    """the match_regions() arguments of a parsed pipeline variant"""
+    return {k: opt[k] for k in ("weak", "zwin", "zalone", "bright", "cand", "u")}
+
+
+def mod_masks(dP, cellprob, cp, up, opt, mod):
+    """masks of one modality from cached network outputs, with the variant's mask options"""
+    from common import masks_from_flows
+    lab = masks_from_flows(dP, cellprob, cp, up, flow_threshold=opt[f"flow_{mod}"], min_size=opt[f"min_{mod}"])
+    return grow_masks(lab, opt[f"grow_{mod}"])
+
+
+def assign_by_score(la, lb, p, t):
+    """one-to-one pairs maximising the summed (p - t) over the accepted pairs; an unmatched cell scores 0"""
+    from scipy.optimize import linear_sum_assignment
+    keep = p >= t
+    if not keep.any():
+        return []
+    la, lb, w = np.asarray(la)[keep], np.asarray(lb)[keep], p[keep] - t + 1e-9
+    ua, ia = np.unique(la, return_inverse=True)
+    ub, ib = np.unique(lb, return_inverse=True)
+    W = np.zeros((len(ua), len(ub)))
+    np.maximum.at(W, (ia, ib), w)
+    r, c = linear_sum_assignment(W, maximize=True)
+    return [(int(ua[i]), int(ub[j])) for i, j in zip(r, c) if W[i, j] > 0]
 
 
 def grow_masks(lab, px):
@@ -43,7 +75,8 @@ def _reg_points(T, frac):
     return xy[np.argsort(-T["inten"])[:k]]
 
 
-def match_regions(items, clf_for, thrs=(0.1,), weak="drop", verbose=False, feats=None, zwin=4.0, zalone=8.0, bright=1.0):
+def match_regions(items, clf_for, thrs=(0.1,), weak="drop", verbose=False, feats=None, zwin=4.0, zalone=8.0, bright=1.0,
+                  cand="hung", u=10.0):
     """items: list of dict(sid, iv_img, ex_img, liv, lex). clf_for(sid) -> fitted classifier.
     Returns {thr: {sid: [(iv_label, ex_label), ...]}}, log DataFrame.
     feats (dict, optional) receives {sid: (iv labels, ex labels, features)} of every candidate pair."""
@@ -68,11 +101,14 @@ def match_regions(items, clf_for, thrs=(0.1,), weak="drop", verbose=False, feats
             reg = dict(reg)
             others = [c["z"] for c in cands[sid] if np.linalg.norm(c["cen"] - reg["cen"]) > 40]
             reg["zgap"] = reg["z"] - (max(others) if others else 0)
-            a, b, F = region_pairs(Tiv, Tex, reg, ivs)
+            a, b, F = region_pairs(Tiv, Tex, reg, ivs, cand=cand, u=u)
             if feats is not None:
                 feats[sid] = (Tiv["labels"][a], Tex["labels"][b], F)
             p = clf_for(sid).predict_proba(F)[:, 1] if len(a) else np.zeros(0)
         for t in thrs:
+            if cand == "all":  # candidates overlap: choose the best one-to-one set by score
+                out[t][sid] = assign_by_score(Tiv["labels"][a], Tex["labels"][b], p, t)
+                continue
             pairs, ui, ue = [], set(), set()
             for x, y, pp in zip(a, b, p):
                 if pp < t:
