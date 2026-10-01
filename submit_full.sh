@@ -21,8 +21,15 @@ if [ ! -f "$BEST" ] && [ -z "$PRED_ARGS" ]; then
 fi
 export PRED_ARGS="--best $BEST ${PRED_ARGS:-}"
 N=$(python3 tasks.py full "$CFG_IV" "$CFG_EX" count)   # ensembles "a+b" train every member
+TODO=$(python3 tasks.py full "$CFG_IV" "$CFG_EX" todo)  # the others are trained and already ran on the test set
 echo "in-vivo: $CFG_IV | ex-vivo: $CFG_EX | predict args: $PRED_ARGS | output: $OUT"
-JID=$(sbatch --parsable $GPU_OPTS $DEP --kill-on-invalid-dep=yes --export=ALL --array=0-$((N - 1)) jobs/train_full.sbatch); JID=${JID%%;*}
-echo "final training job $JID ($N tasks)"
-PID=$(sbatch --parsable $CPU_OPTS --export=ALL --dependency=afterok:"$JID" --kill-on-invalid-dep=yes jobs/predict.sbatch); PID=${PID%%;*}
-echo "prediction job $PID (waits for $JID)  ->  $CM_HOME/$OUT"
+PDEP=""; JID=""
+if [ -n "$TODO" ]; then
+  JID=$(sbatch --parsable $GPU_OPTS $DEP --kill-on-invalid-dep=yes --export=ALL --array=$TODO jobs/train_full.sbatch); JID=${JID%%;*}
+  echo "final training job $JID (tasks $TODO of 0-$((N - 1)))"
+  PDEP="--dependency=afterok:$JID --kill-on-invalid-dep=yes"
+else
+  echo "models and test-set outputs already exist: no GPU job"
+fi
+PID=$(sbatch --parsable $CPU_OPTS --export=ALL $PDEP jobs/predict.sbatch); PID=${PID%%;*}
+echo "prediction job $PID ${JID:+(waits for $JID)} ->  $CM_HOME/$OUT"
