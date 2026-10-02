@@ -13,6 +13,7 @@ cd "$(dirname "$0")"; export CM_HOME="$(pwd)"; mkdir -p logs
 source ./cluster.sh
 DEP=$(bash ./submit_setup.sh --dep)   # empty once the environment is built
 export BEST=${BEST:-runs/best_config.json} OUT=${OUT:-submission.csv}
+[ -e "$OUT" ] && { echo "$OUT already exists: submission files are never overwritten, set OUT to a new name"; exit 1; }
 best() { python3 -c "import json; print(json.load(open('$BEST'))['$1'])"; }
 export CFG_IV=${1:-$(best iv_config)} CFG_EX=${2:-$(best ex_config)}
 case "$CFG_IV $CFG_EX" in *cpsam*) DEP=$(bash ./submit_setup.sh --sam --dep);; esac   # Cellpose-SAM: own overlay

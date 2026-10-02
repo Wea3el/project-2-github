@@ -6,7 +6,7 @@ Flows are read from runs/<config>/<mod>/full/flows (written by infer_flows_hpc.p
 import os, json, argparse, pickle
 import numpy as np, pandas as pd
 
-from common import DATA, RUNS, ROOT, load_images, load_flows, run_dir
+from common import DATA, RUNS, ROOT, load_images, load_flows, run_dir, new_submission, log_submission
 from cm_pipeline import match_regions, to_rows
 
 ap = argparse.ArgumentParser()
@@ -18,15 +18,17 @@ ap.add_argument("--pairs", help="pair classifier training data: gt (shipped), oo
 ap.add_argument("--iv-fold", default="full"); ap.add_argument("--ex-fold", default="full")
 ap.add_argument("--out", default=os.path.join(ROOT, "submission.csv"))
 args = ap.parse_args()
+new_submission(args.out)
 b = json.load(open(args.best)) if os.path.exists(args.best) else {}
 ivc = args.iv_config or b["iv_config"]; cpi = args.cp_iv if args.cp_iv is not None else b["cp_iv"]
 exc = args.ex_config or b["ex_config"]; cpe = args.cp_ex if args.cp_ex is not None else b["cp_ex"]
 thr = args.thr if args.thr is not None else b.get("thr", 0.1)
-pairs = args.pairs or b.get("pairs", "gt")
-print(f"in-vivo: {ivc} cp={cpi} | ex-vivo: {exc} cp={cpe} | pair thr={thr} | pair classifier: {pairs}", flush=True)
+spec = args.pairs or b.get("pairs", "gt")
+print(f"in-vivo: {ivc} cp={cpi} | ex-vivo: {exc} cp={cpe} | pair thr={thr} | pair classifier: {spec}", flush=True)
 
 from cm_pipeline import parse_method, mod_masks, match_kw
-pairs, opt = parse_method(pairs)
+pairs, opt = parse_method(spec)
+pairs_name = pairs
 clf = None
 if pairs == "gt":
     try:
@@ -58,3 +60,7 @@ sub.to_csv(args.out, index=False)
 pd.set_option("display.width", 200)
 print(log.round(2).to_string(index=False))
 print("pairs:", int(log.n_pairs.sum()), "| wrote", args.out, sub.shape)
+from evaluate_cv import PAIR_FILES
+log_submission(args.out, f"iv {ivc}:{cpi:g} | ex {exc}:{cpe:g} | thr {thr:g} | {spec}", int(log.n_pairs.sum()),
+               [(ivc, "iv", args.iv_fold), (exc, "ex", args.ex_fold)],
+               [PAIR_FILES.get(k, f"pairs_{k}.pkl") for k in (["gt", "oof"] if pairs_name == "both" else [pairs_name])])

@@ -162,10 +162,15 @@ outputs, and both Cellpose versions turn those into the same masks.
 **G. Test-set variants from cached outputs, and a threshold check.** A submission from outputs that
 already exist (other thresholds, an ensemble `a+b`, ...) needs no GPU, only the prediction job:
 ```bash
-export CM_HOME=$PWD; source cluster.sh
-pv() { CFG_IV=$2 CFG_EX=$3 OUT=submission_$1.csv PRED_ARGS="$4" sbatch $CPU_OPTS --export=ALL --job-name=cm_pv_$1 jobs/predict.sbatch; }
-pv t1 cyto3_x3_auto cyto3_x3 "--cp-iv -1 --cp-ex -0.5 --thr 0.05 --pairs oof"      # -> submission_t1.csv
+bash pv.sh t1 cyto3_x3_auto cyto3_x3 "--cp-iv -1 --cp-ex -0.5 --thr 0.05 --pairs oof"   # -> submission_t1.csv
+bash ksub.sh t1    # submit to Kaggle with its settings as the description, then print the scores
 ```
+Every prediction appends its settings to `submissions_log.tsv`. `SUBMISSIONS.md` lists every submission with its
+leaderboard score and what it showed: check it before trying a variant. `ksub.sh` needs the Kaggle command once:
+`python3 -m ensurepip --user && python3 -m pip install --user kaggle`, plus your Kaggle token in `~/.kaggle/`. A
+submission name is never reused: `pv.sh`, `submit_full.sh`, `predict_test.py` and `select_versions.py` refuse an existing
+file, and each log line also records the git commit, a hash of the code and the sha1 of the model weights and of the
+pair-classifier data.
 The thresholds tuned on the training mice did not carry over to the test mice (ex-vivo 0 -> 0.5:
 +0.016 held-out, -0.075 on the leaderboard). `calib_check.py` shows how each threshold changes the
 masks per mouse (cells per region, median cell area, cell probability inside the cells; on training
@@ -188,8 +193,13 @@ ex() { OUT=submission_$1.csv PRED_ARGS="$P" bash submit_full.sh cyto3_x3_auto $2
 iv() { OUT=submission_$1.csv PRED_ARGS="$P" bash submit_full.sh $2 cyto3_x3; }        # new in-vivo model
 ex e1 cyto3_x3_pl; iv i1 cyto3_x3_pl_auto
 ```
-`predict_test.py --pairs NAME` also reads a pair classifier from `weights/pairs_NAME.pkl`, e.g. one
-built on Cellpose-SAM masks with `build_pairs_oof.py --out weights/pairs_oofsam.pkl`.
+`predict_test.py --pairs NAME` also reads a pair classifier from `weights/pairs_NAME.pkl`. A classifier for the masks of
+another submission (existing classifier files are never overwritten), compared with `oof` on the held-out mice:
+`NAME=oofs1 IV=cyto3_x3_auto:-1 EX=cpsam2_x3:-1 bash submit_pairs.sh`, then predict with `--pairs oofs1`.
+Self-training labels the test images with the teacher trained on the same mice as the student (for a
+cross-validation fold, first `python infer_flows_hpc.py --mod ex --config <teacher> --fold <mouse> --split hidden_test`);
+`pseudo_frac` keeps only that fraction of the pseudo-labelled tiles (`cpsam2_x3_pl1h`: 0.3). The student's best
+threshold is a new parameter: try 0, -0.5 and -1.
 
 **I. Matching fixes, boundary ablations, failure breakdown, strict validation (mostly CPU).**
 Pipeline variants (`cm_pipeline.METHOD_DEFAULTS`) now also take `cand=gain+u=8` (candidate pairs by an
@@ -229,6 +239,8 @@ GPU use: about 1 L4-hour for the fast run and 10–20 for the full comparison (t
 | `build_pairs_oof.py`, `submit_pairs.sh` | pair classifier from out-of-fold predicted masks |
 | `evaluate_cv.py`, `submit_eval.sh` | leave-one-mouse-out scoring with the competition metric (resumable, split over CPU jobs) |
 | `predict_test.py` | test-set masks → registration → pairs → `submission.csv` |
+| `pv.sh`, `ksub.sh` | prediction-only submission from cached outputs (CPU); submit to Kaggle with the settings as description |
+| `SUBMISSIONS.md` | every submission: settings, leaderboard score, lessons (`submissions_log.tsv` on the cluster: settings of each prediction) |
 | `cm_pipeline.py`, `consensus2.py`, `match.py`, `pipeline.py` | matching pipeline |
 | `cmutil.py`, `segdata.py`, `seg_infer.py`, `shape_ops.py` | utilities, metric, Cellpose inference |
 | `weights/` | current segmentation weights (`full_iv`, `full_ex`) and pair classifier |

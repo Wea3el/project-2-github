@@ -6,6 +6,7 @@ correct with the competition's rule (both cells matched to ground truth at IoU >
 ground-truth cells form a verified pair).
 
 usage: python build_pairs_oof.py --iv cyto3_x2:-0.5 --ex cyto3_x3:0 [--method oof+cand=all] [--strict] [--out ...]
+       python build_pairs_oof.py --iv cyto3_x3_auto:-1 --ex cpsam2_x3:-1 --out weights/pairs_oofs1.pkl   # for s1's masks
   --method  pipeline options for the masks and the candidates (cm_pipeline.parse_method; the name before the first
             "+" is ignored), e.g. oof+cand=all for the classifier of the all-candidates assignment
   --strict  nested: when mouse A is held out, the regions of mouse B are segmented by the model trained on the
@@ -32,6 +33,8 @@ args = ap.parse_args()
 _, opt = parse_method(args.method)
 name = "oof" + ("strict" if args.strict else "") + ("all" if opt["cand"] == "all" else "")
 out_fn = args.out or os.path.join(ROOT, "weights", f"pairs_{name}.pkl")
+if os.path.exists(out_fn):  # submitted files were made with it: keep them reproducible
+    raise SystemExit(f"{out_fn} already exists: pair-classifier data is never overwritten, give a new --out")
 
 # (outer held-out mouse or None, mouse whose regions are labelled, run folder of the models that segment it)
 if args.strict:

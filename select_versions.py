@@ -115,6 +115,9 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--out", default="submission_sel.csv")
     args = ap.parse_args()
+    if args.mode == "test":
+        from common import new_submission
+        new_submission(args.out)
     os.makedirs(SDIR, exist_ok=True)
     versions = args.versions.split(",")
     folds = SUBJECTS if args.mode == "cv" else ["test"]
@@ -151,3 +154,10 @@ if __name__ == "__main__":
         W["chosen"] = C.version
         print(W.to_string())
         print("versions chosen:", C.version.value_counts().to_dict(), "| pairs:", int(C.n_pred.sum()), "| wrote", args.out)
+        from common import log_submission
+        from evaluate_cv import PAIR_FILES
+        pn = parse_method(args.pairs)[0]
+        log_submission(args.out, f"per-region choice of iv {args.versions} (rule {args.rule}, lam {args.lam:g}) | ex {args.ex} | "
+                       f"thr {args.thr:g} | {args.pairs}", int(C.n_pred.sum()),
+                       [(v.rsplit(":", 1)[0], "iv", "full") for v in versions] + [(args.ex.rsplit(":", 1)[0], "ex", "full")],
+                       [PAIR_FILES.get(k, f"pairs_{k}.pkl") for k in (["gt", "oof"] if pn == "both" else [pn])])

@@ -8,6 +8,8 @@ runs_smoke/
 cache/
 logs/
 submission*.csv
+submissions_log.tsv
+viz/
 __pycache__/
 *.pyc
 .DS_Store

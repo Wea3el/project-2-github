@@ -50,6 +50,13 @@ CONFIGS = {
                         pseudo=dict(iv="cyto3_x3_auto:-1", ex="cyto3_x3:0")),
     "cpsam2_x3_pl": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1,
                          pseudo=dict(iv="cyto3_x3_auto:-1", ex="cyto3_x3:0")),
+    # the same with the ex-vivo masks of submission s1 (Cellpose-SAM at cell probability -1, LB 0.5125) as labels:
+    # e1's labels (cyto3 at cell probability 0) were too small for the test mice
+    "cpsam2_x3_pl1": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1,
+                          pseudo=dict(iv="cyto3_x3_auto:-1", ex="cpsam2_x3:-1")),
+    # if e4 (cpsam2_x3_pl1) does not beat s1: fewer pseudo-labelled tiles (30% of them, ~15% of all tiles instead of ~40%)
+    "cpsam2_x3_pl1h": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1,
+                           pseudo=dict(iv="cyto3_x3_auto:-1", ex="cpsam2_x3:-1"), pseudo_frac=0.3),
     # the shipped weights behind submissions v3/v4 (trained on all three mice): only for
     # predictions (runs/shipped/<mod>/full) or sanity checks, never for cross-validation
     "shipped": dict(pretrained=None, nbase=(16, 32, 64, 128), up=1),
@@ -70,6 +77,6 @@ MODS = ["iv", "ex"]
 SUBJECTS = ["subject_5d294c", "subject_b2ba5e", "subject_db6b8b"]
 
 # Cellpose cell-probability thresholds tried at evaluation time (mask extent)
-CP_GRID = {"iv": [-1.5, -1.0, -0.5, 0.0], "ex": [-1.0, -0.5, 0.0, 0.5]}
+CP_GRID = {"iv": [-1.5, -1.0, -0.5, 0.0], "ex": [-1.5, -1.25, -1.0, -0.75, -0.5, 0.0, 0.5]}
 # pair-classifier thresholds tried at evaluation time
 THR_GRID = [0.05, 0.1, 0.2]

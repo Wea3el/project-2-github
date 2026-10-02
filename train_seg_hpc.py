@@ -8,7 +8,7 @@ import os, sys, json, time, argparse
 import numpy as np
 import torch
 
-from common import DATA, gt_labels, training_ids, load_images, run_dir, load_flows, masks_from_flows
+from common import DATA, gt_labels, training_ids, load_images, run_dir, load_flows, masks_from_flows, has_flows
 from configs import CONFIGS
 from segdata import norm_img, make_tiles, median_diameter
 
@@ -68,16 +68,28 @@ print(f"{len(ids)} regions -> {len(tiles)} tiles, median diameter {np.median(dia
 if cfg.get("pseudo"):  # self-training: the unlabelled test images, labelled with an earlier model's masks
     import pandas as pd
     pc, pcp = cfg["pseudo"][args.mod].rsplit(":", 1)
-    for sid in pd.read_csv(os.path.join(DATA, "sample_submission.csv")).sample_id:
+    # the teacher trained on the same mice as this model: a "full" teacher has seen a held-out mouse's labels
+    trd = run_dir(pc, args.mod, args.fold)
+    test_ids = list(pd.read_csv(os.path.join(DATA, "sample_submission.csv")).sample_id)
+    if not all(has_flows(trd, sid) for sid in test_ids):
+        sys.exit(f"self-training needs {pc}'s test-set outputs for fold {args.fold}: "
+                 f"python infer_flows_hpc.py --mod {args.mod} --config {pc} --fold {args.fold} --split hidden_test")
+    n_real = len(tiles)
+    for sid in test_ids:
         img = load_images(sid, "hidden_test")[0 if args.mod == "iv" else 1]
         key = hash(img.tobytes())
         if key in seen:
             continue
         seen.add(key)
-        dP, prob, pup = load_flows(run_dir(pc, args.mod, "full"), sid)
+        dP, prob, pup = load_flows(trd, sid)
         ti, tl = make_tiles(norm_img(img), masks_from_flows(dP, prob, float(pcp), pup), tile=128, step=112, rng=rng)
         tiles += ti; tlabs += tl
-    print(f"+ test images labelled by {pc} at cellprob {pcp} -> {len(tiles)} tiles", flush=True)
+    frac = cfg.get("pseudo_frac", 1.0)   # keep only this fraction of the pseudo-labelled tiles
+    if frac < 1:
+        keep = sorted(rng.choice(np.arange(n_real, len(tiles)), int(frac * (len(tiles) - n_real)), replace=False))
+        tiles = tiles[:n_real] + [tiles[i] for i in keep]; tlabs = tlabs[:n_real] + [tlabs[i] for i in keep]
+    print(f"+ test images labelled by {pc} at cellprob {pcp}: {len(tiles) - n_real} pseudo-labelled tiles "
+          f"({(len(tiles) - n_real) / len(tiles):.0%} of {len(tiles)})", flush=True)
 # flow targets are computed on the CPU: Cellpose 3.1.1.3's GPU version crashes on tiles that contain a
 # single foreground pixel (np.stack on a 0-d array in _extend_centers_gpu); the CPU version is fine
 flows = dynamics.labels_to_flows(tlabs, device=torch.device("cpu"))  # each (4,H,W): label, mask, flowY, flowX

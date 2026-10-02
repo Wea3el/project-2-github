@@ -63,13 +63,15 @@ _FP = {}
 
 
 def fingerprint(pairs):
-    """short hash of the matching code and of the pair-classifier data; part of every cached result's name,
-    so a change to either recomputes the results instead of reusing stale ones"""
+    """short hash of the matching / scoring code, the pair thresholds, the classifier fitting code and the pair-classifier
+    data; part of every cached result's name, so a change to any of them recomputes the results instead of reusing stale ones"""
     if pairs not in _FP:
         import hashlib
         h = hashlib.sha1()
-        for f in ("common.py", "match.py", "pipeline.py", "consensus2.py", "cm_pipeline.py"):
+        import inspect
+        for f in ("common.py", "cmutil.py", "match.py", "pipeline.py", "consensus2.py", "cm_pipeline.py"):
             h.update(open(os.path.join(ROOT, f), "rb").read())
+        h.update(repr(THR_GRID).encode() + inspect.getsource(fit_clf).encode())   # what a cached result contains
         for k in (["gt", "oof"] if pairs == "both" else [pairs]):
             fn = os.path.join(ROOT, "weights", PAIR_FILES.get(k, f"pairs_{k}.pkl"))
             h.update(open(fn, "rb").read() if os.path.exists(fn) else b"missing")
@@ -160,7 +162,8 @@ def run_stage_a(configs, workers):
     if missing:
         print("not finished (skipped):", missing)
     A = pd.read_csv(A_CSV) if os.path.exists(A_CSV) else pd.DataFrame(columns=["config", "mod", "fold"])
-    have = set(map(tuple, A[["config", "mod", "fold"]].drop_duplicates().values))
+    # reused only if every threshold of CP_GRID is there (thresholds added to the grid are computed)
+    have = {k for k, g in A.groupby(["config", "mod", "fold"]) if set(np.round(g.cp, 3)) >= set(np.round(CP_GRID[k[1]], 3))}
     todo = [t for t in tasks if t not in have]
     print(f"stage A: {len(tasks) - len(todo)} (config, modality, mouse) reused from {A_CSV}, {len(todo)} to compute", flush=True)
     if todo:
@@ -168,6 +171,8 @@ def run_stage_a(configs, workers):
             gt_labels(sid)
         with Pool(min(workers, len(todo))) as pool:
             new = pd.DataFrame([r for rows in pool.map(stage_a, todo) for r in rows])
+        td = set(todo)
+        A = A[[t not in td for t in zip(A.config, A["mod"], A.fold)]]   # their partial rows are replaced
         A = pd.concat([A, new], ignore_index=True) if len(A) else new
         A.to_csv(A_CSV + f".{os.getpid()}.tmp", index=False)
         os.replace(A_CSV + f".{os.getpid()}.tmp", A_CSV)   # other evaluations may be reading it
@@ -243,10 +248,10 @@ if __name__ == "__main__":
     ap.add_argument("--nshards", type=int, default=1)
     ap.add_argument("--configs", default=None, help="default: every config trained in runs/ + configs.ENSEMBLES")
     ap.add_argument("--iv-top", type=int, default=2, help="best in-vivo settings (by PQ) carried into stage B")
-    ap.add_argument("--iv-extra", default="cyto3_x3:-1,cyto3_x2:-0.5", help="in-vivo settings always included (config:cellprob)")
+    ap.add_argument("--iv-extra", default="cyto3_x3_auto:-1,cyto3_x3:-1", help="in-vivo settings always included (config:cellprob)")
     ap.add_argument("--ex-top", type=int, default=4, help="best ex-vivo configs (by verified-cell hits) carried into stage B")
-    ap.add_argument("--ex-extra", default="cyto3_x3", help="ex-vivo configs always included")
-    ap.add_argument("--ex-cps", default="-0.5,0,0.5")
+    ap.add_argument("--ex-extra", default="cpsam2_x3,cyto3_x3", help="ex-vivo configs always included")
+    ap.add_argument("--ex-cps", default="-1.5,-1.25,-1,-0.75,-0.5,0", help="ex-vivo thresholds (the leaderboard best is -1)")
     ap.add_argument("--pairs", default="gt", help="pipeline variants to compare (comma list): pair data gt / oof / both, "
                     "optionally with options, e.g. oof+weak=keep+bright=0.5 (see cm_pipeline.METHOD_DEFAULTS)")
     ap.add_argument("--tag", default="", help="name for this evaluation (keeps its task list / results apart)")

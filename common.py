@@ -81,3 +81,53 @@ def load_flows(run_dir, sid):
 def run_dir(config, mod, fold):
     """fold = held-out subject for cross-validation, or 'full' (trained on all mice)."""
     return os.path.join(RUNS, config, mod, fold)
+
+
+# ---------------------------------------------------------------- submission files: never overwritten, always recorded
+def new_submission(out):
+    """submitted files must stay reproducible: stop before any work if the name is already taken"""
+    if os.path.exists(out):
+        raise SystemExit(f"{out} already exists: submission files are never overwritten, pick a new name")
+
+
+def _sha(fn, n=10):
+    import hashlib
+    if not os.path.exists(fn):
+        return "missing"
+    h = hashlib.sha1()
+    with open(fn, "rb") as f:
+        for b in iter(lambda: f.read(1 << 24), b""):
+            h.update(b)
+    return h.hexdigest()[:n]
+
+
+def _git_commit():
+    """commit checked out in ROOT, read from .git directly (git is not installed in the container)"""
+    g = os.path.join(ROOT, ".git")
+    try:
+        head = open(os.path.join(g, "HEAD")).read().strip()
+        if not head.startswith("ref: "):
+            return head[:7]
+        ref = head[5:]
+        if os.path.exists(os.path.join(g, ref)):
+            return open(os.path.join(g, ref)).read().strip()[:7]
+        return next(l.split()[0][:7] for l in open(os.path.join(g, "packed-refs")) if l.rstrip().endswith(" " + ref))
+    except Exception:
+        return "unknown"
+
+
+def log_submission(out, settings, n_pairs, models, pair_files):
+    """append what a submission contains to submissions_log.tsv (see SUBMISSIONS.md): date, file, settings (ksub.sh sends
+    them to Kaggle as the description), pairs, code (git commit + hash of the .py files, so uncommitted edits show), and
+    sha1 of the model weights and of the pair-classifier data. models: (config, mod, fold); pair_files: names in weights/"""
+    import glob, hashlib, time
+    code = hashlib.sha1(b"".join(open(f, "rb").read() for f in sorted(glob.glob(os.path.join(ROOT, "*.py"))))).hexdigest()[:8]
+    hashes = []
+    for cfg, mod, fold in models:
+        for c in cfg.split("+"):   # ensembles; "_auto" / "_tta" runs use their base config's weights
+            base = c[:-5] if c.endswith("_auto") else c[:-4] if c.endswith("_tta") else c
+            hashes.append(f"{base}/{mod}/{fold}={_sha(os.path.join(run_dir(base, mod, fold), 'model'))}")
+    hashes += [f"{p}={_sha(os.path.join(ROOT, 'weights', p))}" for p in pair_files]
+    with open(os.path.join(ROOT, "submissions_log.tsv"), "a") as f:
+        f.write("\t".join([time.strftime("%Y-%m-%d %H:%M"), os.path.basename(out), settings, f"{n_pairs} pairs",
+                           f"git {_git_commit()} code {code}", " ".join(hashes)]) + "\n")
