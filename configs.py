@@ -40,6 +40,8 @@ CONFIGS = {
     "cpsam2_x3_aug": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1, aug=True),
     "cpsam2_x3_long": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=300, nimg=128, batch=1, lr=1e-5, wd=0.1),
     "cpsam_x3": dict(pretrained="cpsam", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1),  # April 2025 weights
+    # a second run of cpsam2_x3 (other seed): alone, and averaged with the first ("cpsam2_x3+cpsam2_x3_s1")
+    "cpsam2_x3_s1": dict(pretrained="cpsam_v2", up=3, bsize=256, epochs=100, nimg=128, batch=1, lr=1e-5, wd=0.1, seed=1),
     # wider size augmentation (cells scaled 0.5-1.5x instead of 0.75-1.25x): ground-truth cell sizes differ a lot
     # between mice (median ex-vivo cell area 54-98 px^2 on the three training mice)
     "cyto3_x3_sr": dict(pretrained="cyto3", up=3, bsize=224, epochs=300, nimg=256, batch=8, lr=0.005, sr=1.0),

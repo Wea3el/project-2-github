@@ -19,7 +19,7 @@ import numpy as np
 
 from common import ROOT, gt_labels, training_ids, load_images, load_flows, run_dir
 from configs import SUBJECTS
-from cm_pipeline import match_regions, tp_map, parse_method, mod_masks, match_kw
+from cm_pipeline import match_regions, tp_map, parse_method, region_item, match_kw
 from evaluate_cv import fit_clf
 
 ap = argparse.ArgumentParser()
@@ -47,19 +47,18 @@ for outer, mouse, rf in jobs:
     items, gts = [], {}
     for sid in training_ids(subjects=[mouse]):
         iv, ex = load_images(sid, "training")
-        dP, cp, up = load_flows(run_dir(ivc, "iv", rf), sid); liv = mod_masks(dP, cp, ivcp, up, opt, "iv")
-        dP, cp, up = load_flows(run_dir(exc, "ex", rf), sid); lex = mod_masks(dP, cp, excp, up, opt, "ex")
-        items.append(dict(sid=sid, iv_img=iv, ex_img=ex, liv=liv, lex=lex)); gts[sid] = gt_labels(sid)
+        items.append(region_item(sid, iv, ex, load_flows(run_dir(ivc, "iv", rf), sid), load_flows(run_dir(exc, "ex", rf), sid),
+                                 ivcp, excp, opt)); gts[sid] = gt_labels(sid)
     feats = {}
     clf = fit_clf("gt", mouse)  # only needed to run the pipeline; its scores are not used here
     match_regions(items, lambda s: clf, feats=feats, **match_kw(opt))
     for it in items:
         sid = it["sid"]; giv, gex, gp = gts[sid]
-        la, lb, F = feats.get(sid, (np.zeros(0, int), np.zeros(0, int), np.zeros((0, 14))))
+        la, lb, F = feats.get(sid, (np.zeros(0, int), np.zeros(0, int), np.zeros((0, 14 + 4 * opt["q"]))))
         miv, _ = tp_map(it["liv"], giv); mex, _ = tp_map(it["lex"], gex)
         gset = {(int(a), int(b)) for a, b in gp}
         y = np.array([(miv[a][0] if a in miv else -1, mex[b][0] if b in mex else -2) in gset for a, b in zip(la, lb)], bool)
-        r = dict(sid=sid, F=np.asarray(F, np.float64).reshape(-1, 14), y=y, ngt=len(gset))
+        r = dict(sid=sid, F=np.asarray(F, np.float64), y=y, ngt=len(gset))
         if outer:
             r["outer"] = outer
         rows.append(r)

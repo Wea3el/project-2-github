@@ -183,15 +183,14 @@ PANELS = ("<p>Left: in-vivo. Middle: ex-vivo resampled into the in-vivo frame wi
 def cv_fold(task):
     fold, ivc, ivcp, exc, excp, method, thr, out = task
     from common import gt_labels, training_ids, load_flows, run_dir
-    from cm_pipeline import match_regions, tp_map, parse_method, mod_masks, match_kw
+    from cm_pipeline import match_regions, tp_map, parse_method, region_item, match_kw
     from evaluate_cv import fit_clf
     pairs_data, opt = parse_method(method)
     items = []
     for sid in training_ids(subjects=[fold]):
         iv, ex = load_images(sid, "training")
-        dP, cp, up = load_flows(run_dir(ivc, "iv", fold), sid); liv = mod_masks(dP, cp, ivcp, up, opt, "iv")
-        dP, cp, up = load_flows(run_dir(exc, "ex", fold), sid); lex = mod_masks(dP, cp, excp, up, opt, "ex")
-        items.append(dict(sid=sid, iv_img=iv, ex_img=ex, liv=liv, lex=lex))
+        items.append(region_item(sid, iv, ex, load_flows(run_dir(ivc, "iv", fold), sid), load_flows(run_dir(exc, "ex", fold), sid),
+                                 ivcp, excp, opt))
     clf = fit_clf(pairs_data, fold)
     P, log = match_regions(items, lambda s: clf, thrs=(thr,), **match_kw(opt))
     rows = []

@@ -200,6 +200,11 @@ Self-training labels the test images with the teacher trained on the same mice a
 cross-validation fold, first `python infer_flows_hpc.py --mod ex --config <teacher> --fold <mouse> --split hidden_test`);
 `pseudo_frac` keeps only that fraction of the pseudo-labelled tiles (`cpsam2_x3_pl1h`: 0.3). The student's best
 threshold is a new parameter: try 0, -0.5 and -1.
+Pipeline option `q=1` gives the pair classifier each cell's mask confidence (Cellpose flow error, and stability = IoU
+with the mask at cell probability +0.5); it needs a classifier built with it:
+`NAME=oofs1q IV=cyto3_x3_auto:-1 EX=cpsam2_x3:-1 OPTS="+q=1+flow_ex=0.3" bash submit_pairs.sh`, then `--pairs oofs1q+q=1+flow_ex=0.3`.
+`diagnose_cv.py` ends with the matching F1 and its two ceilings (perfect pairing of the verified pairs whose cells are both
+segmented; perfect classification of the candidates). One-off CPU runs: `bash cpu.sh NAME "python ..."`.
 
 **I. Matching fixes, boundary ablations, failure breakdown, strict validation (mostly CPU).**
 Pipeline variants (`cm_pipeline.METHOD_DEFAULTS`) now also take `cand=gain+u=8` (candidate pairs by an
@@ -239,7 +244,7 @@ GPU use: about 1 L4-hour for the fast run and 10–20 for the full comparison (t
 | `build_pairs_oof.py`, `submit_pairs.sh` | pair classifier from out-of-fold predicted masks |
 | `evaluate_cv.py`, `submit_eval.sh` | leave-one-mouse-out scoring with the competition metric (resumable, split over CPU jobs) |
 | `predict_test.py` | test-set masks → registration → pairs → `submission.csv` |
-| `pv.sh`, `ksub.sh` | prediction-only submission from cached outputs (CPU); submit to Kaggle with the settings as description |
+| `pv.sh`, `ksub.sh`, `cpu.sh` | prediction-only submission from cached outputs (CPU); submit to Kaggle with the settings as description; one-off CPU job |
 | `SUBMISSIONS.md` | every submission: settings, leaderboard score, lessons (`submissions_log.tsv` on the cluster: settings of each prediction) |
 | `cm_pipeline.py`, `consensus2.py`, `match.py`, `pipeline.py` | matching pipeline |
 | `cmutil.py`, `segdata.py`, `seg_infer.py`, `shape_ops.py` | utilities, metric, Cellpose inference |

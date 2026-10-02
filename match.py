@@ -435,8 +435,9 @@ def register_region(civ, cex, ex_shape, topk=12, angles=np.arange(-24, 24.1, 2.0
 
 def pair_features(civ, cex, P, Tiv, Tex, reg, r=10.0, iv_shape=None, cand="hung", u=10.0):
     a, b, d, d2i, d2e = candidate_pairs(P, cex, r=r, cand=cand, u=u)
+    nq = Tiv["q"].shape[1] + Tex["q"].shape[1] if "q" in Tiv else 0   # mask-confidence features (option q)
     if len(a) == 0:
-        return a, b, np.zeros((0, 14))
+        return a, b, np.zeros((0, 14 + nq))
     # local iv density (ambiguity) around mapped point
     tiv = cKDTree(P)
     n_iv_15 = np.array([len(tiv.query_ball_point(P[x], 15.0)) for x in a])
@@ -450,8 +451,11 @@ def pair_features(civ, cex, P, Tiv, Tex, reg, r=10.0, iv_shape=None, cand="hung"
     F = np.c_[d, d2i, d2e, d / np.minimum(d2i, d2e).clip(0.5), n_iv_15, n_ex_15, bd,
               Tiv["area"][a], Tex["area"][b], iv_rank, ex_rank,
               np.full(len(a), reg["z"]), np.full(len(a), reg["n_inl"]), np.full(len(a), reg.get("zgap", 0.0))]
+    if nq:
+        F = np.c_[F, Tiv["q"][a], Tex["q"][b]]
     return a, b, F
 
 
+# + with option q: "flowerr_iv", "stability_iv", "flowerr_ex", "stability_ex"
 FEAT_NAMES = ["d", "d2i", "d2e", "dratio", "niv15", "nex15", "border", "area_iv", "area_ex",
               "rank_iv", "rank_ex", "regz", "reg_ninl", "zgap"]

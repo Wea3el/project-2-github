@@ -18,8 +18,10 @@ from consensus2 import group_register
 #   cand     hung | gain | all   how candidate pairs are chosen (match.candidate_pairs); all = every nearby
 #            pair is scored by the classifier, then a one-to-one assignment maximises the summed (p - thr)
 #   u        10.0          gain: the cost of leaving a cell unmatched (a pair at distance d is worth u - d)
+#   q        0 | 1         1 = the pair classifier also sees each cell's mask confidence (mask_quality): needs a
+#                          classifier built with it (build_pairs_oof.py --method oof+q=1 ...)
 METHOD_DEFAULTS = dict(weak="drop", zwin=4.0, zalone=8.0, bright=1.0, grow_iv=0, grow_ex=0,
-                       flow_iv=0.4, flow_ex=0.4, min_iv=15, min_ex=15, cand="hung", u=10.0)
+                       flow_iv=0.4, flow_ex=0.4, min_iv=15, min_ex=15, cand="hung", u=10.0, q=0)
 
 
 def parse_method(spec):
@@ -42,6 +44,36 @@ def mod_masks(dP, cellprob, cp, up, opt, mod):
     from common import masks_from_flows
     lab = masks_from_flows(dP, cellprob, cp, up, flow_threshold=opt[f"flow_{mod}"], min_size=opt[f"min_{mod}"])
     return grow_masks(lab, opt[f"grow_{mod}"])
+
+
+def mask_quality(dP, cellprob, cp, up, lab, opt, mod):
+    """per-label mask confidence, one row per label id (row 0 unused): Cellpose's flow error (the quantity the flow
+    check thresholds) and stability = IoU with the best-overlapping mask at cell probability cp + 0.5"""
+    import torch
+    from cellpose import metrics
+    nl = int(lab.max()) + 1
+    q = np.zeros((nl, 2))
+    if nl == 1:
+        return q
+    q[1:, 0] = metrics.flow_error(lab, np.asarray(dP, np.float32), device=torch.device("cpu"))[0]
+    alt = mod_masks(dP, cellprob, cp + 0.5, up, opt, mod)
+    na = int(alt.max()) + 1
+    m = (lab > 0) & (alt > 0)
+    inter = np.bincount(lab[m].astype(np.int64) * na + alt[m], minlength=nl * na).reshape(nl, na)
+    union = np.bincount(lab.ravel(), minlength=nl)[:, None] + np.bincount(alt.ravel(), minlength=na)[None, :] - inter
+    if na > 1:
+        q[:, 1] = (inter / np.maximum(union, 1))[:, 1:].max(1)
+    return q
+
+
+def region_item(sid, iv_img, ex_img, fiv, fex, cp_iv, cp_ex, opt):
+    """match_regions() input for one region, from both images' cached network outputs (dP, cellprob, up)"""
+    it = dict(sid=sid, iv_img=iv_img, ex_img=ex_img)
+    for mod, (dP, prob, up), cp in (("iv", fiv, cp_iv), ("ex", fex, cp_ex)):
+        it["l" + mod] = mod_masks(dP, prob, cp, up, opt, mod)
+        if opt.get("q"):
+            it["q" + mod] = mask_quality(dP, prob, cp, up, it["l" + mod], opt, mod)
+    return it
 
 
 def assign_by_score(la, lb, p, t):
@@ -84,6 +116,8 @@ def match_regions(items, clf_for, thrs=(0.1,), weak="drop", verbose=False, feats
     for it in items:
         sid = it["sid"]
         Tiv, Tex = cell_table(it["liv"], it["iv_img"]), cell_table(it["lex"], it["ex_img"])
+        if "qiv" in it:   # option q: each cell's mask confidence becomes a pair feature
+            Tiv["q"], Tex["q"] = it["qiv"][Tiv["labels"]], it["qex"][Tex["labels"]]
         civ_r = _reg_points(Tiv, bright)
         res = register_region(civ_r, Tex["xy"], it["ex_img"].shape) if len(civ_r) >= 3 and len(Tex["xy"]) >= 3 else []
         info[sid] = (Tiv, Tex, it["iv_img"].shape)

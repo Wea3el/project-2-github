@@ -111,17 +111,14 @@ def stage_b(task):
         return out_fn
     fold, (ivc, ivcp), (exc, excp), ptag = task
     t0 = time.time()
-    from cm_pipeline import match_regions, score, parse_method, mod_masks, match_kw
+    from cm_pipeline import match_regions, score, parse_method, region_item, match_kw
     pairs_data, opt = parse_method(ptag)
     clf = fit_clf(pairs_data, fold)
     items, gts = [], {}
     for sid in training_ids(subjects=[fold]):
         iv, ex = load_images(sid, "training")
-        dP, cp, up = load_flows(run_dir(ivc, "iv", fold), sid)
-        liv = mod_masks(dP, cp, ivcp, up, opt, "iv")
-        dP, cp, up = load_flows(run_dir(exc, "ex", fold), sid)
-        lex = mod_masks(dP, cp, excp, up, opt, "ex")
-        items.append(dict(sid=sid, iv_img=iv, ex_img=ex, liv=liv, lex=lex))
+        items.append(region_item(sid, iv, ex, load_flows(run_dir(ivc, "iv", fold), sid),
+                                 load_flows(run_dir(exc, "ex", fold), sid), ivcp, excp, opt))
         gts[sid] = gt_labels(sid)
     pairs, log = match_regions(items, lambda s: clf, thrs=tuple(THR_GRID), **match_kw(opt))
     out = []

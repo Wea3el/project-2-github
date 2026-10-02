@@ -19,7 +19,7 @@ import numpy as np, pandas as pd
 
 from common import DATA, RUNS, gt_labels, training_ids, load_images, load_flows, run_dir
 from configs import SUBJECTS
-from cm_pipeline import match_regions, score, to_rows, parse_method, mod_masks, match_kw
+from cm_pipeline import match_regions, score, to_rows, parse_method, region_item, match_kw
 
 SDIR = os.path.join(RUNS, "select")
 RULES = {  # rule -> per-region score to maximise (ties: the first version listed wins)
@@ -60,9 +60,8 @@ def run_version(task):
     items = []
     for sid in ids:
         iv, ex_img = load_images(sid, split)
-        dP, cp, up = load_flows(run_dir(ivc, "iv", rd_fold), sid); liv = mod_masks(dP, cp, ivcp, up, opt, "iv")
-        dP, cp, up = load_flows(run_dir(exc, "ex", rd_fold), sid); lex = mod_masks(dP, cp, excp, up, opt, "ex")
-        items.append(dict(sid=sid, iv_img=iv, ex_img=ex_img, liv=liv, lex=lex))
+        items.append(region_item(sid, iv, ex_img, load_flows(run_dir(ivc, "iv", rd_fold), sid),
+                                 load_flows(run_dir(exc, "ex", rd_fold), sid), ivcp, excp, opt))
     clf = fit(pairs_data, fold if mode == "cv" else "none")
     feats = {}
     pairs, log = match_regions(items, lambda s: clf, thrs=(thr,), feats=feats, **match_kw(opt))
@@ -70,7 +69,7 @@ def run_version(task):
     rows = []
     for it in items:
         sid = it["sid"]; P = pairs[thr][sid]
-        la, lb, F = feats.get(sid, ([], [], np.zeros((0, 14))))
+        la, lb, F = feats.get(sid, ([], [], np.zeros((0, 14 + 4 * opt["q"]))))
         p = clf.predict_proba(F)[:, 1] if len(F) else np.zeros(0)
         prob = {(int(a), int(b)): float(q) for a, b, q in zip(la, lb, p)}
         r = dict(sid=sid, version=version, conf=float(sum(prob.get((int(a), int(b)), 0.0) for a, b in P)),

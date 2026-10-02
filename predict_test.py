@@ -26,7 +26,7 @@ thr = args.thr if args.thr is not None else b.get("thr", 0.1)
 spec = args.pairs or b.get("pairs", "gt")
 print(f"in-vivo: {ivc} cp={cpi} | ex-vivo: {exc} cp={cpe} | pair thr={thr} | pair classifier: {spec}", flush=True)
 
-from cm_pipeline import parse_method, mod_masks, match_kw
+from cm_pipeline import parse_method, region_item, match_kw
 pairs, opt = parse_method(spec)
 pairs_name = pairs
 clf = None
@@ -43,10 +43,9 @@ sample = pd.read_csv(os.path.join(DATA, "sample_submission.csv"))
 items = []
 for sid in sample.sample_id:
     iv, ex = load_images(sid, "hidden_test")
-    dP, cp, up = load_flows(run_dir(ivc, "iv", args.iv_fold), sid); liv = mod_masks(dP, cp, cpi, up, opt, "iv")
-    dP, cp, up = load_flows(run_dir(exc, "ex", args.ex_fold), sid); lex = mod_masks(dP, cp, cpe, up, opt, "ex")
-    items.append(dict(sid=sid, iv_img=iv, ex_img=ex, liv=liv, lex=lex))
-    print(sid, int(liv.max()), int(lex.max()), flush=True)
+    items.append(region_item(sid, iv, ex, load_flows(run_dir(ivc, "iv", args.iv_fold), sid),
+                             load_flows(run_dir(exc, "ex", args.ex_fold), sid), cpi, cpe, opt))
+    print(sid, int(items[-1]["liv"].max()), int(items[-1]["lex"].max()), flush=True)
 pairs, log = match_regions(items, lambda s: clf, thrs=(thr,), verbose=True, **match_kw(opt))
 sub = pd.DataFrame([to_rows(it["sid"], it["liv"], it["lex"], pairs[thr][it["sid"]]) for it in items])
 

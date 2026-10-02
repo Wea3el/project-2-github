@@ -5,6 +5,7 @@ through the pipeline, using the models trained without that region's mouse (CPU 
 and sort every predicted pair into correct / wrong in-vivo cell / wrong ex-vivo cell / wrong partner.
 
 usage: python diagnose_cv.py --iv cyto3_x3:-1 --ex cyto3_x3:0 --thr 0.1 [--pairs gt] [--out runs/diag_v6.csv]
+       python diagnose_cv.py --iv cyto3_x3_auto:-1 --ex cpsam2_x3:-1 --thr 0.05 --pairs oof+flow_ex=0.3 --out runs/diag_f3.csv
   stages per verified pair: in-vivo / ex-vivo / both cells segmented (IoU > 0.75) -> the right pair among the
   candidates -> accepted by the classifier; --pairs takes any pipeline variant, e.g. oof+cand=gain+u=8
 """
@@ -13,7 +14,7 @@ import numpy as np, pandas as pd
 
 from common import RUNS, gt_labels, training_ids, load_images, load_flows, run_dir
 from configs import SUBJECTS
-from cm_pipeline import match_regions, tp_map, parse_method, mod_masks, match_kw
+from cm_pipeline import match_regions, tp_map, parse_method, region_item, match_kw
 from evaluate_cv import fit_clf
 
 ap = argparse.ArgumentParser()
@@ -31,9 +32,8 @@ for fold in SUBJECTS:
     items, gts = [], {}
     for sid in training_ids(subjects=[fold]):
         iv, ex = load_images(sid, "training")
-        dP, cp, up = load_flows(run_dir(ivc, "iv", fold), sid); liv = mod_masks(dP, cp, ivcp, up, opt, "iv")
-        dP, cp, up = load_flows(run_dir(exc, "ex", fold), sid); lex = mod_masks(dP, cp, excp, up, opt, "ex")
-        items.append(dict(sid=sid, iv_img=iv, ex_img=ex, liv=liv, lex=lex)); gts[sid] = gt_labels(sid)
+        items.append(region_item(sid, iv, ex, load_flows(run_dir(ivc, "iv", fold), sid), load_flows(run_dir(exc, "ex", fold), sid),
+                                 ivcp, excp, opt)); gts[sid] = gt_labels(sid)
     clf, feats = fit_clf(pairs_data, fold), {}
     pairs, log = match_regions(items, lambda s: clf, thrs=(args.thr,), feats=feats, **match_kw(opt))
     status = dict(zip(log.sid, log.status))
@@ -65,5 +65,13 @@ D.to_csv(args.out, index=False)
 S = D.groupby("mouse")[["gt_pairs", "iv_found", "ex_found", "both_found", "proposed", "accepted", "pred_pairs", "correct",
                         "wrong_iv", "wrong_ex", "wrong_partner"]].sum()
 S.loc["all"] = S.sum()
-print("\n", S.to_string())
+# matching F1 now, and its ceilings: perfect pairing of the verified pairs whose two cells are both segmented
+# (2B / (B + G)), and perfect classification of the candidates that contain them
+S["f1"] = 2 * S.correct / (S.pred_pairs + S.gt_pairs).clip(lower=1)
+S["f1_max_masks"] = 2 * S.both_found / (S.both_found + S.gt_pairs).clip(lower=1)
+S["f1_max_candidates"] = 2 * S.proposed / (S.proposed + S.gt_pairs).clip(lower=1)
+pd.set_option("display.width", 250)
+print("\n", S.round(3).to_string())
+print("\nlost before both_found -> segmentation | both_found -> proposed -> registration / candidates | "
+      "proposed -> accepted -> classifier / threshold")
 print("saved", args.out)
