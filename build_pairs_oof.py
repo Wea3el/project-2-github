@@ -20,7 +20,13 @@ import numpy as np
 from common import ROOT, gt_labels, training_ids, load_images, load_flows, run_dir
 from configs import SUBJECTS
 from cm_pipeline import match_regions, tp_map, parse_method, region_item, match_kw
-from evaluate_cv import fit_clf
+
+
+class NoScores:
+    """the pipeline needs a classifier, but only the candidate pairs and their features are kept here (a real one
+    trained on 14 features would also reject the 18 of option q)"""
+    def predict_proba(self, F):
+        return np.zeros((len(F), 2))
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--iv", required=True, help="config:cellprob")
@@ -50,8 +56,7 @@ for outer, mouse, rf in jobs:
         items.append(region_item(sid, iv, ex, load_flows(run_dir(ivc, "iv", rf), sid), load_flows(run_dir(exc, "ex", rf), sid),
                                  ivcp, excp, opt)); gts[sid] = gt_labels(sid)
     feats = {}
-    clf = fit_clf("gt", mouse)  # only needed to run the pipeline; its scores are not used here
-    match_regions(items, lambda s: clf, feats=feats, **match_kw(opt))
+    match_regions(items, lambda s: NoScores(), feats=feats, **match_kw(opt))
     for it in items:
         sid = it["sid"]; giv, gex, gp = gts[sid]
         la, lb, F = feats.get(sid, (np.zeros(0, int), np.zeros(0, int), np.zeros((0, 14 + 4 * opt["q"]))))

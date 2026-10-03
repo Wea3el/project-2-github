@@ -104,5 +104,7 @@ Ex-vivo threshold curves (in-vivo cyto3_x3_auto at −1, pair threshold 0.05, oo
 | e6 (GPU) | ex-vivo cpsam2_x3_aug: Cellpose-SAM with brightness/contrast augmentation | robustness to the test images |
 | e7 / e7n (GPU, after e5, e6 and tt1) | a second Cellpose-SAM run (cpsam2_x3_s1, other seed) alone, then averaged with cpsam2_x3 | averaging two runs of the same model is untested (the cyto3 + SAM ensembles were worse) |
 
-The GPU runs (e4–e6) are first predicted with s1's settings (flow check 0.4, pair threshold 0.05), so compare them with s1;
-re-predict the promising ones with the best settings of the moment.
+The GPU runs e4–e6 were first predicted with s1's settings (files e4, e5, e6, not submitted); they are re-predicted with
+f3's settings as e4f, e5f, e6f (and e4f05 / e4f0 for the self-trained model's own threshold), to compare with f3 directly.
+tt1 (test-time augmentation) is already at f3's settings. The first oofs1q build failed (it ran the pipeline with the
+14-feature classifier as a placeholder, which rejects the 18 features); fixed, rebuilding.
